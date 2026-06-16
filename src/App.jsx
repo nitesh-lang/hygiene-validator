@@ -576,6 +576,13 @@ export default function App(){
   const setA=(a,fn)=>setAsinSt(p=>({...p,[a]:fn(p[a]||{decisions:{},comments:{},verified:{},done:false,notes:""})}));
   const goN=()=>setCurIdx(i=>Math.min(i+1,filtered.length-1));
   const goP=()=>setCurIdx(i=>Math.max(i-1,0));
+  // Save & Next: mark current ASIN done (progress auto-saves already) then jump to next.
+  const saveAndNext=()=>{
+    if(!cur)return;
+    setA(cur.asin,s=>({...s,done:true}));
+    setCurIdx(i=>Math.min(i+1,filtered.length-1));
+    window.scrollTo({top:0,behavior:"smooth"});
+  };
   // Mark done — but warn if checks are still undecided. Toggling OFF is always allowed.
   const toggleDone=()=>{
     if(!cur)return;
@@ -803,6 +810,10 @@ export default function App(){
               />))}
             </div>;})}
             {grouped.length===0&&<div style={{textAlign:"center",padding:40,color:T.t2,fontSize:14}}>No checks match filter.</div>}
+            <div style={{display:"flex",justifyContent:"center",gap:12,padding:"20px 0 40px",borderTop:`1px solid ${T.bd}`,marginTop:16}}>
+              <button onClick={goP} disabled={curIdx===0} style={{background:"#F1F5F9",border:"none",borderRadius:8,padding:"10px 20px",cursor:curIdx===0?"not-allowed":"pointer",fontSize:14,fontWeight:600,color:T.t1}}>← Prev</button>
+              <button onClick={saveAndNext} disabled={curIdx>=filtered.length-1} style={{background:"linear-gradient(135deg,#0F766E,#D97706)",border:"none",borderRadius:8,padding:"10px 28px",cursor:curIdx>=filtered.length-1?"not-allowed":"pointer",fontSize:14,fontWeight:700,color:"#FFF",opacity:curIdx>=filtered.length-1?0.5:1}}>Save &amp; Next →</button>
+            </div>
           </>)}
         </main>
       </div>

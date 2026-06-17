@@ -151,7 +151,6 @@ const CK=[
   {id:"asin_active",name:"3P ASIN Active (Y/N)",group:"P0 · ASIN Active",p:0},
   {id:"nodding",name:"Nodding",group:"P1 · Noding",p:1},
   {id:"title",name:"Title",group:"P2 · Title Loading",p:2},
-  {id:"title_format",name:"Title Format (Brand_Model_Type_Specs)",group:"P2 · Title Loading",p:2},
   {id:"bullets_avail",name:"Bullets Available",group:"P3 · Bullet Points",p:3},
   {id:"bullets_kw",name:"Bullets: Highlight Benefits & Include Keywords",group:"P3 · Bullet Points",p:3},
   {id:"bullets_box",name:"What is In the Box (manual)",group:"P3 · Bullet Points",p:3},
@@ -284,7 +283,6 @@ function validate(cr,ir){
   add("asin_active",cv("Title")||cv("Sold By")?"Live":"",iv("asin active(yes","asin active"),"active");
   add("nodding",cv("Category Tree"),iv("correct nodding","nodding on pdp"),"nodding");
   add("title",cv("Title"),iv("title name"),"title");
-  add("title_format",titleFormatOk(cv("Title"),cv("Brand"),iv("model name")||cr.SKU)?"Format OK":"",iv("title correct","product title format"),"titlefmt");
   const bul=cv("Bullets");
   add("bullets_avail",bul||"",iv("bullet points available"),"yn");
   add("bullets_kw",bul||"",iv("bullets highlight benefit","bullets highlight benefits"),"yn");

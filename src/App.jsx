@@ -637,8 +637,8 @@ export default function App(){
   const brands=useMemo(()=>{const m={};products.forEach(p=>{if(!m[p.brand])m[p.brand]={total:0,done:0,withInput:0,pass:0,fail:0,rev:0};m[p.brand].total++;if(p.hasInput)m[p.brand].withInput++;m[p.brand].pass+=p.pass;m[p.brand].fail+=p.fail;m[p.brand].rev+=p.review;if(asinSt[p.asin]?.done)m[p.brand].done++;});return m;},[products,asinSt]);
   const filtered=useMemo(()=>{let l=curBrand==="ALL"?products:products.filter(p=>p.brand===curBrand);if(hideDone)l=l.filter(p=>!asinSt[p.asin]?.done);return l;},[products,curBrand,hideDone,asinSt]);
   const cur=filtered[curIdx]||null;
-  const getA=a=>asinSt[a]||{decisions:{},comments:{},verified:{},done:false,notes:""};
-  const setA=(a,fn)=>setAsinSt(p=>({...p,[a]:fn(p[a]||{decisions:{},comments:{},verified:{},done:false,notes:""})}));
+  const getA=a=>asinSt[a]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
+  const setA=(a,fn)=>setAsinSt(p=>{const prev=p[a]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};const upd=fn(prev);return{...p,[a]:{...upd,by:authUser||upd.by||""}};});
   const goN=()=>setCurIdx(i=>Math.min(i+1,filtered.length-1));
   const goP=()=>setCurIdx(i=>Math.max(i-1,0));
   // Save & Next: mark current ASIN done (progress auto-saves already) then jump to next.
@@ -717,7 +717,7 @@ export default function App(){
 
   const doExport=()=>{
     const rows=[];
-    products.forEach((p,i)=>{const a=getA(p.asin);const row={Sr:i+1,Brand:p.brand,ASIN:p.asin,Title:p.title?.slice(0,80),Score:p.score+"%",Pass:p.pass,Fail:p.fail,Review:p.review,Reviewed:a.done?"Yes":"No"};
+    products.forEach((p,i)=>{const a=getA(p.asin);const row={Sr:i+1,Brand:p.brand,ASIN:p.asin,Title:p.title?.slice(0,80),Score:p.score+"%",Pass:p.pass,Fail:p.fail,Review:p.review,Reviewed:a.done?"Yes":"No","Validated By":a.by||"-"};
       p.checks.forEach(ck=>{const d=CK.find(x=>x.id===ck.id);const n=d?.name||ck.id;
         const cv=getCorrectedVal(p.asin,ck.id,ck.inputVal);
         const corrected=cv!==undefined&&cv!==ck.origInputVal;
@@ -955,6 +955,7 @@ export default function App(){
                 <button onClick={toggleDone} style={{background:as?.done?T.pass:"#F1F5F9",color:as?.done?"#FFF":T.t1,border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .2s"}}>{as?.done?"✓ Done":"Mark Done"}</button>
               </div>
               <input value={as?.notes||""} onChange={e=>setA(cur.asin,s=>({...s,notes:e.target.value}))} placeholder="Notes for this ASIN..." style={{width:"100%",marginTop:10,padding:"6px 10px",borderRadius:6,border:`1px solid ${T.bd}`,fontSize:12,outline:"none",fontFamily:"'DM Sans'",boxSizing:"border-box"}}/>
+              {as?.by&&<div style={{marginTop:6,fontSize:11,color:T.t2}}>Validated by: <b>{as.by}</b></div>}
             </div>
             <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap",background:"#FBFEFD",border:`1px solid ${T.bd}`,borderRadius:10,padding:10}}>
               {[{k:"all",l:"All",i:""},{k:"review",l:"Review",i:"⚠"},{k:"failed",l:"Failed",i:"✗"},{k:"passed",l:"Passed",i:"✓"}].map(f=>(

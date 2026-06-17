@@ -673,6 +673,64 @@ export default function App(){
     const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Hygiene Report");XLSX.writeFile(wb,`hygiene_export_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
+  // Read the crawl value for a given check id off the product's checks.
+  function crawlOf(p,id){const ck=p.checks.find(c=>c.id===id);return ck?ss(ck.crawlVal):"";}
+  function inputOf(p,id){const ck=p.checks.find(c=>c.id===id);return ck?ss(ck.inputVal):"";}
+  function decOf(p,id){const a=getA(p.asin);const m=a.decisions[id];if(m&&m!=="Not Sure")return m;const ck=p.checks.find(c=>c.id===id);return ck?ck.status:"";}
+  const doExportSheet=()=>{
+    // [header, fn] using crawl values (source of truth from live PDP).
+    const COLS=[
+      ["Brand",p=>p.brand],["SKU",p=>inputOf(p,"title")&&""||""],["ASIN",p=>p.asin],
+      ["Model Name",p=>inputOf(p,"title_format")],
+      ["Correct Nodding for reference",p=>crawlOf(p,"nodding")],
+      ["Title Name",p=>crawlOf(p,"title")],
+      ["NCE (SP > 1500)",p=>crawlOf(p,"nce")],
+      ["Ratings",p=>crawlOf(p,"ratings_reviews")],["Review ",p=>crawlOf(p,"reviews")],
+      ["Images - minimum 5",p=>crawlOf(p,"images_5")],
+      ["Feature images",p=>crawlOf(p,"feature_img")],
+      ["Lifestyle images present or not - also can refer to other competitors",p=>crawlOf(p,"lifestyle_img")],
+      ["Customer Support Image",p=>crawlOf(p,"cs_image")],
+      ["What is in the box image",p=>crawlOf(p,"box_image")],
+      ["Ours vs Their Image",p=>crawlOf(p,"ours_vs_their")],
+      ["Listing video (Y/N)",p=>crawlOf(p,"listing_video")],
+      ["Influencer Video",()=>""],
+      ["Correct Variations",p=>crawlOf(p,"variation")],
+      ["Variation on PDP",p=>crawlOf(p,"variation")],
+      ["Bullet points available - Yes or No(if any changes required can highlight here)",p=>crawlOf(p,"bullets_avail")?"Yes":"No"],
+      ["Bullets highlight benefits & include keywords",p=>crawlOf(p,"bullets_kw")],
+      ["What is in the Box In bullet point",p=>crawlOf(p,"bullets_box")],
+      ["Correct Warranty",p=>crawlOf(p,"warranty")],
+      ["Warranty  on panel",p=>crawlOf(p,"warranty_desc")],
+      ["correct and incorrect ",p=>decOf(p,"warranty")],
+      ["Product added in brand store",p=>crawlOf(p,"brand_store")?"Yes":"No"],
+      ["Product added in brand Story",p=>crawlOf(p,"brand_story")?"Yes":"No"],
+      ["CS WA Qr Code in brand Story",p=>crawlOf(p,"cs_wa_qr_story")],
+      ["A+ (Y/N)",p=>crawlOf(p,"aplus")?"Yes":"No"],
+      ["Description / A+ Content",p=>crawlOf(p,"description")],
+      ["Colour",p=>crawlOf(p,"colour")],["Material ",p=>crawlOf(p,"material")],
+      ["What's in the box (Box Contents)",p=>crawlOf(p,"box_contents")],
+      ["Iteam Weight",p=>crawlOf(p,"weight")],["Dimensions",p=>crawlOf(p,"dimensions")],
+      ["Mfg details",p=>crawlOf(p,"manufacturer")],
+      ["Packer details",p=>crawlOf(p,"packer")],
+      ["Importer details",p=>crawlOf(p,"importer")],
+      ["Additional Features",p=>crawlOf(p,"addl_features")],
+      ["Backend search terms",p=>inputOf(p,"backend_kw")],
+      ["Correct Return Policy",p=>crawlOf(p,"return_policy")],
+      ["Return policy on page",p=>crawlOf(p,"return_policy")],
+      ["Correct Fee Category",p=>inputOf(p,"fee_category")],
+      ["Fee category in backend (Correct/Incorrect)",p=>decOf(p,"fee_category")],
+      ["Correct Ref fees",p=>inputOf(p,"ref_fees")],
+      ["Ref fees in the backend (Correct/Incorrect)",p=>decOf(p,"ref_fees")],
+      ["Other competitor remarks for Nodding, Fee category",()=>""],
+      ["Cross check other main competitors if any changes (Done)",()=>""],
+      ["Policy changes competitor asin's",()=>""],
+    ];
+    const data=products.map(p=>{const o={};COLS.forEach(([h,fn])=>{try{o[h]=fn(p);}catch{o[h]="";}});return o;});
+    const ws=XLSX.utils.json_to_sheet(data,{header:COLS.map(c=>c[0])});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Format");
+    XLSX.writeFile(wb,`Hygiene_Completed_Sheet_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
   const grouped=useMemo(()=>{if(!cur)return[];const g={};cur.checks.forEach(ck=>{const d=CK.find(x=>x.id===ck.id);if(!d)return;if(!g[d.group])g[d.group]=[];g[d.group].push({check:ck,def:d});});if(filter!=="all"){const t=filter==="review"?"REVIEW":filter==="failed"?"FAIL":"PASS";Object.keys(g).forEach(k=>{
     g[k]=g[k].filter(i=>{
       // Use corrected status for filtering
@@ -744,6 +802,7 @@ export default function App(){
         <input value={validator} onChange={e=>setValidator(e.target.value)} placeholder="Validator" style={{background:"#1E293B",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#E2E8F0",fontSize:12,width:120,outline:"none",fontFamily:"'DM Sans'"}}/>
         <button onClick={backup} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Backup JSON (includes corrections)">💾</button>
         <button onClick={exportCorrections} style={{background:"none",border:"1px solid #7C3AED",borderRadius:6,padding:"4px 12px",color:"#A78BFA",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export corrections DB as Excel">📦</button>
+        <button onClick={doExportSheet} style={{background:"linear-gradient(135deg,#1D4ED8,#0F766E)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export in your team's input-sheet format">↓ Sheet</button>
         <button onClick={doExport} style={{background:"linear-gradient(135deg,#0F766E,#D97706)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}}>↓ Export</button>
         <button onClick={()=>setScreen("upload")} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}}>←</button>
       </header>

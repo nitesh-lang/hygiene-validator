@@ -52,7 +52,7 @@ function sn(v){const s=ss(v).replace(/[₹,Rs.\s‎]/g,"");const m=s.match(/[\d]
 function numSeq(s){const m=ss(s).match(/\d+\.?\d*/g);return m?m.map(Number):[];}
 function numSeqEq(a,b){const x=numSeq(a),y=numSeq(b);if(!x.length||!y.length)return false;if(x.length!==y.length)return false;return x.every((n,i)=>Math.abs(n-y[i])<0.01);}
 function isY(v){const n=nm(v);return["y","yes","correct","updated","true"].includes(n);}
-function isN(v){const n=nm(v);return!n||["n","no","n0","incorrect","false","0"].includes(n);}
+function isN(v){const n=nm(v);return["n","no","n0","incorrect","false","0"].includes(n);}
 function pipeC(s){const v=ss(s);return v?v.split("|").filter(x=>x.trim()).length:0;}
 function cleanB(b){return ss(b).replace(/^Visit the\s+/i,"").replace(/\s+Store$/i,"").replace(/^Brand:\s*/i,"").trim();}
 const EXCL=new Set(["tonor","coleshome","n"]);

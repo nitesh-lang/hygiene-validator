@@ -31,9 +31,10 @@ function warrantyYears(s){
   // explicit "N year(s)" / "N yr"
   let m=t.match(/(\d+)\s*(year|yr)/);
   if(m)return parseInt(m[1]);
-  // explicit months → keep separate (e.g. "6 months")
+  // explicit months → convert to years when a whole-year multiple (12mo=1yr, 24mo=2yr),
+  // otherwise keep as fractional years so 6mo != 1yr.
   m=t.match(/(\d+)\s*month/);
-  if(m)return -parseInt(m[1]); // negative = months, so 1yr(12) never equals 6mo
+  if(m){const mo=parseInt(m[1]);return mo/12;}
   // bare number alone (input sheet often just has "1","2","3")
   m=t.match(/^\s*(\d+)\s*$/);
   if(m)return parseInt(m[1]);
@@ -46,6 +47,10 @@ function ratingBand(s){const m=ss(s).match(/(\d+(?:\.\d+)?)/);if(!m)return"";con
 // Resolve a rating value (number OR word) to its band word, for matching both sides.
 function ratingToBand(s){const t=nm(s);if(["excellent","good","ok","mixed","poor"].includes(t))return t;return ratingBand(s);}
 function sn(v){const s=ss(v).replace(/[₹,Rs.\s‎]/g,"");const m=s.match(/[\d]+\.?\d*/);return m?parseFloat(m[0]):null;}
+// Pull every number out of a string for unit-agnostic comparison.
+// "8 x 8 x 4 Centimeters" -> [8,8,4]; "8*8*4" -> [8,8,4]; "270 Grams" -> [270]; "270" -> [270]
+function numSeq(s){const m=ss(s).match(/\d+\.?\d*/g);return m?m.map(Number):[];}
+function numSeqEq(a,b){const x=numSeq(a),y=numSeq(b);if(!x.length||!y.length)return false;if(x.length!==y.length)return false;return x.every((n,i)=>Math.abs(n-y[i])<0.01);}
 function isY(v){const n=nm(v);return["y","yes","correct","updated","true"].includes(n);}
 function isN(v){const n=nm(v);return!n||["n","no","n0","incorrect","false","0"].includes(n);}
 function pipeC(s){const v=ss(s);return v?v.split("|").filter(x=>x.trim()).length:0;}
@@ -206,6 +211,7 @@ function reDecide(id, crawlVal, inputVal, mode){
       return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
     }
     case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+    case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
     case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
     case"nce":return"REVIEW";
     default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -213,7 +219,7 @@ function reDecide(id, crawlVal, inputVal, mode){
 }
 
 // Check mode lookup
-const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"yn",dimensions:"yn",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
+const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"num",dimensions:"num",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
 
 // ═══ VALIDATION ═══
 function validate(cr,ir){
@@ -248,6 +254,7 @@ function validate(cr,ir){
         return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
       }
       case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+      case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
       case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
       case"nce":{const sp=sn(cv("Selling Price"));if(isY(inp))return(sp&&sp>1500)?"PASS":"FAIL";if(isN(inp))return(sp&&sp<=1500)?"PASS":"FAIL";return"REVIEW";}
       default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -272,8 +279,8 @@ function validate(cr,ir){
   add("mail_qr","",iv("mail id","mail qr","support qr image"),"yn");
   add("cs_wa_qr_story","",iv("cs wa qr code in brand story","cs wa qr"),"yn");
   add("colour",cv("Colour"),iv("colour","color"),"yn");
-  add("weight",cv("Weight"),iv("iteam weight","item weight"),"yn");
-  add("dimensions",cv("Dimensions"),iv("dimensions"),"yn");
+  add("weight",cv("Weight"),iv("iteam weight","item weight"),"num");
+  add("dimensions",cv("Dimensions"),iv("dimensions"),"num");
   add("material",cv("Material"),iv("material"),"yn");
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
   add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"yn");

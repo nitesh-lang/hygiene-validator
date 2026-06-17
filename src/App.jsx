@@ -203,7 +203,7 @@ function reDecide(id, crawlVal, inputVal, mode){
     case"title":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.85?"PASS":"FAIL";}
     case"warranty":{const cy=warrantyYears(c),hy=warrantyYears(inp);if(cy!==null&&hy!==null)return cy===hy?"PASS":"FAIL";const cn=nm(c),hn=nm(inp);return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";}
     case"return":{const a=returnKind(c),b=returnKind(inp);if(a.repl!==b.repl||a.ret!==b.ret)return"FAIL";if(a.days&&b.days&&a.days!==b.days)return"FAIL";return"PASS";}
-    case"rating":{const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"REVIEW":"FAIL";}
+    case"rating":{const rv=parseFloat((ss(c).match(/(\d+(?:\.\d+)?)/)||[])[1]);if(!isNaN(rv)&&rv<4)return"FAIL";const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"PASS":"REVIEW";}
     case"yn":{
       if(isY(inp))return c.length>0?"PASS":"FAIL";
       if(isN(inp))return c.length===0?"PASS":"REVIEW";
@@ -246,7 +246,7 @@ function validate(cr,ir){
       case"title":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.85?"PASS":"FAIL";}
       case"warranty":{const cy=warrantyYears(c),hy=warrantyYears(inp);if(cy!==null&&hy!==null)return cy===hy?"PASS":"FAIL";const cn=nm(c),hn=nm(inp);return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";}
       case"return":{const a=returnKind(c),b=returnKind(inp);if(a.repl!==b.repl||a.ret!==b.ret)return"FAIL";if(a.days&&b.days&&a.days!==b.days)return"FAIL";return"PASS";}
-      case"rating":{const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"REVIEW":"FAIL";}
+      case"rating":{const rv=parseFloat((ss(c).match(/(\d+(?:\.\d+)?)/)||[])[1]);if(!isNaN(rv)&&rv<4)return"FAIL";const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"PASS":"REVIEW";}
       case"yn":{
         if(isY(inp))return c.length>0?"PASS":"FAIL";
         if(isN(inp))return c.length===0?"PASS":"REVIEW";
@@ -307,9 +307,11 @@ function validate(cr,ir){
   const ratInp=iv("ratings","rating");
   const ratInpBand=ratingToBand(ratInp);
   // Show "value → band" on both sides so the validator sees the word mapping.
-  const ratInpDisplay=ratInp?(ratInpBand&&!/excellent|good|ok|mixed|poor/i.test(ratInp)?`${ratInp} → ${ratInpBand}`:ratInp):"";
-  add("ratings_reviews",rat?(ratBand?`${rat} → ${ratBand}`:rat):"",ratInpDisplay,"rating");
-  add("reviews",cv("Rating Count")?`${cv("Rating Count")} reviews`:"",iv("review"),"reviews");
+  const ratCrawlDisplay=rat?(ratBand?`${rat} → ${ratBand}`:rat):"";
+  const ratInpDisplay=ratInp?(ratInpBand&&!/excellent|good|ok|mixed|poor/i.test(ratInp)?`${ratInp} → ${ratInpBand}`:ratInp):ratCrawlDisplay; // mirror crawl when input blank
+  add("ratings_reviews",ratCrawlDisplay,ratInpDisplay,"rating");
+  const revCrawl=cv("Rating Count")?`${cv("Rating Count")} reviews`:"";
+  add("reviews",revCrawl,iv("review")||revCrawl,"reviews"); // mirror crawl when input blank
   add("aplus",cv("A+ Content")?`Present${cv("A+ Image Count")&&cv("A+ Image Count")!=="0"?` · ${cv("A+ Image Count")} imgs`:""}`:"",iv("a+ (y","a+ y"),"yn");
   add("description",cv("Description"),iv("description / a+","description/a+"),"yn");
   // Competitor-research columns — always manual review, sourced from input sheet notes.
@@ -590,6 +592,15 @@ export default function App(){
     setCurIdx(i=>Math.min(i+1,filtered.length-1));
     window.scrollTo({top:0,behavior:"smooth"});
   };
+  // Search by ASIN: jump to the matching ASIN in the current filtered list.
+  const[asinSearch,setAsinSearch]=useState("");
+  const jumpToAsin=(q)=>{
+    const term=ss(q).toUpperCase().trim();
+    if(!term)return;
+    const i=filtered.findIndex(p=>ss(p.asin).toUpperCase().includes(term));
+    if(i>=0){setCurIdx(i);window.scrollTo({top:0,behavior:"smooth"});}
+    else alert(`ASIN "${q}" not found in the ${curBrand==="ALL"?"":curBrand+" "}list.`);
+  };
   // Mark done — but warn if checks are still undecided. Toggling OFF is always allowed.
   const toggleDone=()=>{
     if(!cur)return;
@@ -785,6 +796,8 @@ export default function App(){
                 <button onClick={goP} disabled={curIdx===0} style={{background:"#F1F5F9",border:"none",borderRadius:6,padding:"6px 14px",cursor:curIdx===0?"not-allowed":"pointer",fontSize:13,fontWeight:600,color:T.t1}}>← Prev</button>
                 <span style={{fontSize:12,color:T.t2}}>{curIdx+1}/{filtered.length}</span>
                 <button onClick={goN} disabled={curIdx>=filtered.length-1} style={{background:"#F1F5F9",border:"none",borderRadius:6,padding:"6px 14px",cursor:curIdx>=filtered.length-1?"not-allowed":"pointer",fontSize:13,fontWeight:600,color:T.t1}}>Next →</button>
+                <input value={asinSearch} onChange={e=>setAsinSearch(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")jumpToAsin(asinSearch);}} placeholder="Search ASIN…" style={{background:"#FFF",border:`1px solid ${T.bd}`,borderRadius:6,padding:"6px 10px",fontSize:12,width:130,color:T.t1,fontFamily:"'JetBrains Mono',monospace"}}/>
+                <button onClick={()=>jumpToAsin(asinSearch)} style={{background:T.ac,border:"none",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#FFF"}}>Go</button>
                 <div style={{flex:1}}/>
                 <label style={{fontSize:11,color:T.t2,display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}><input type="checkbox" checked={hideDone} onChange={e=>setHideDone(e.target.checked)} style={{accentColor:T.ac}}/>Hide done</label>
                 {pendingCount>0

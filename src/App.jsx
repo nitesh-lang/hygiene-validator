@@ -490,6 +490,45 @@ export default function App(){
   const crRef=useRef(null),inRef=useRef(null);
   const addLog=(m)=>setLog(p=>p+(p?"\n":"")+m);
 
+  // ═══ LOGIN / USERS (shared cloud storage) ═══
+  const SEED_USERS={
+    "Naresh More":{pw:"Naresh@123",admin:false},
+    "Hazique Khalique":{pw:"Hazique@123",admin:true},
+    "Nitesh Sharma":{pw:"Nitesh@123",admin:false},
+  };
+  const[authUser,setAuthUser]=useState(null);     // logged-in full name
+  const[users,setUsers]=useState(SEED_USERS);     // {name:{pw,admin}}
+  const[loginName,setLoginName]=useState("");
+  const[loginPw,setLoginPw]=useState("");
+  const[loginErr,setLoginErr]=useState("");
+  const[showAddUser,setShowAddUser]=useState(false);
+  const[newU,setNewU]=useState({name:"",pw:""});
+  // Load users from shared cloud storage (merge with seeds so the 3 always exist).
+  useEffect(()=>{(async()=>{try{const r=await window.storage.get("hv_users",true);if(r&&r.value){const cloud=JSON.parse(r.value);setUsers({...SEED_USERS,...cloud});}}catch{}})();},[]);
+  // Remember the session locally so a refresh keeps you logged in.
+  useEffect(()=>{try{const s=localStorage.getItem("hv_session");if(s)setAuthUser(s);}catch{}},[]);
+  const saveUsersCloud=async(u)=>{try{const extra={};Object.keys(u).forEach(k=>{if(!SEED_USERS[k])extra[k]=u[k];});await window.storage.set("hv_users",JSON.stringify(extra),true);}catch{}};
+  const doLogin=()=>{
+    const name=loginName.trim();
+    const u=users[name];
+    if(u&&u.pw===loginPw){setAuthUser(name);setValidator(name);try{localStorage.setItem("hv_session",name);}catch{}setLoginErr("");setLoginName("");setLoginPw("");}
+    else setLoginErr("Incorrect name or password.");
+  };
+  const doLogout=()=>{setAuthUser(null);try{localStorage.removeItem("hv_session");}catch{}};
+  const addUser=async()=>{
+    const n=newU.name.trim();
+    if(!n||!newU.pw){setLoginErr("");return;}
+    const next={...users,[n]:{pw:newU.pw,admin:false}};
+    setUsers(next);await saveUsersCloud(next);setNewU({name:"",pw:""});setShowAddUser(false);
+  };
+  const removeUser=async(name)=>{
+    if(SEED_USERS[name]){alert("Built-in users can't be removed.");return;}
+    if(!window.confirm(`Remove user "${name}"?`))return;
+    const next={...users};delete next[name];setUsers(next);await saveUsersCloud(next);
+  };
+  const isAdmin=authUser&&users[authUser]?.admin;
+
+
   useEffect(()=>{const d=ldLS();if(d){if(d.asinSt)setAsinSt(d.asinSt);if(d.validator)setValidator(d.validator);if(d.curBrand)setCurBrand(d.curBrand);if(d.corrections)setCorrections(d.corrections);}},[]);
   useEffect(()=>{if(Object.keys(asinSt).length>0)svLS({asinSt,validator,curBrand,curIdx,corrections});},[asinSt,validator,curBrand,curIdx,corrections]);
 
@@ -771,6 +810,21 @@ export default function App(){
   const corrCount=Object.keys(corrections.global).length+Object.values(corrections.byAsin).reduce((s,o)=>s+Object.keys(o).length,0);
 
   // ═══ UPLOAD SCREEN ═══
+  if(!authUser)return(
+    <div style={{minHeight:"100vh",background:T.hd,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
+      <div style={{background:T.card,borderRadius:16,padding:"40px 36px",width:340,boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+        <div style={{fontSize:22,fontWeight:800,color:T.ac,marginBottom:4}}>Hygiene Validator</div>
+        <div style={{fontSize:13,color:T.t2,marginBottom:24}}>Sign in to continue</div>
+        <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Full Name</label>
+        <input value={loginName} onChange={e=>setLoginName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doLogin();}} placeholder="e.g. Naresh More" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"10px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+        <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Password</label>
+        <input type="password" value={loginPw} onChange={e=>setLoginPw(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doLogin();}} placeholder="••••••••" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"10px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+        {loginErr&&<div style={{color:"#DC2626",fontSize:12,marginBottom:12}}>{loginErr}</div>}
+        <button onClick={doLogin} style={{width:"100%",background:T.ac,color:"#FFF",border:"none",borderRadius:8,padding:"11px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Sign In</button>
+      </div>
+    </div>
+  );
+
   if(screen==="upload")return(
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#071A18 0%,#0B2F2A 48%,#172033 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans',sans-serif",padding:20}}>
       <div style={{maxWidth:640,width:"100%"}}>
@@ -812,16 +866,35 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'DM Sans',sans-serif",display:"flex",flexDirection:"column"}}>
       {corrModal&&<CorrectionModal checkName={corrModal.checkName} asin={corrModal.asin} origVal={corrModal.origVal} newVal={corrModal.newVal} onApply={applyCorrection} onCancel={()=>setCorrModal(null)}/>}
+      {showAddUser&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={()=>setShowAddUser(false)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",borderRadius:14,padding:28,width:360}}>
+          <div style={{fontSize:18,fontWeight:800,color:T.ac,marginBottom:16}}>Manage Users</div>
+          <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Full Name</label>
+          <input value={newU.name} onChange={e=>setNewU({...newU,name:e.target.value})} placeholder="e.g. Priya Singh" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 12px",padding:"9px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+          <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Password</label>
+          <input value={newU.pw} onChange={e=>setNewU({...newU,pw:e.target.value})} placeholder="e.g. Priya@123" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"9px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+          <button onClick={addUser} style={{width:"100%",background:T.ac,color:"#FFF",border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",fontSize:14}}>Add User</button>
+          <div style={{marginTop:18,maxHeight:160,overflowY:"auto"}}>
+            {Object.keys(users).map(n=>(<div key={n} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.bd}`,fontSize:13}}>
+              <span>{n}{users[n].admin?" (admin)":""}</span>
+              {!SEED_USERS[n]&&<button onClick={()=>removeUser(n)} style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12}}>Remove</button>}
+            </div>))}
+          </div>
+          <button onClick={()=>setShowAddUser(false)} style={{marginTop:14,width:"100%",background:"#F1F5F9",border:"none",borderRadius:8,padding:"9px",cursor:"pointer",fontSize:13,fontWeight:600,color:T.t1}}>Close</button>
+        </div>
+      </div>}
       <header style={{background:T.hd,padding:"0 20px",height:56,display:"flex",alignItems:"center",gap:16,boxShadow:"0 2px 16px rgba(11,31,30,.22)",position:"sticky",top:0,zIndex:100,borderBottom:"1px solid rgba(94,234,212,.16)"}}>
         <span style={{fontFamily:"'Outfit'",fontWeight:800,fontSize:18,background:"linear-gradient(135deg,#5EEAD4,#FDE68A)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Hygiene Validator v3.10</span>
         <span style={{color:"#64748B",fontSize:12}}>{ov.done}/{ov.total} ({ov.pct}%)</span>
         {corrCount>0&&<span style={{color:"#A78BFA",fontSize:10,fontWeight:600,background:"#1E1B4B",padding:"2px 8px",borderRadius:4}}>📦 {corrCount} fixes</span>}
         <div style={{flex:1}}/>
-        <input value={validator} onChange={e=>setValidator(e.target.value)} placeholder="Validator" style={{background:"#1E293B",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#E2E8F0",fontSize:12,width:120,outline:"none",fontFamily:"'DM Sans'"}}/>
+        <span style={{color:"#94A3B8",fontSize:12,fontWeight:600}}>👤 {authUser}</span>
+        {isAdmin&&<button onClick={()=>setShowAddUser(true)} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Add a user">+ User</button>}
         <button onClick={backup} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Backup JSON (includes corrections)">💾</button>
         <button onClick={exportCorrections} style={{background:"none",border:"1px solid #7C3AED",borderRadius:6,padding:"4px 12px",color:"#A78BFA",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export corrections DB as Excel">📦</button>
         <button onClick={doExportSheet} style={{background:"linear-gradient(135deg,#1D4ED8,#0F766E)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export in your team's input-sheet format">↓ Sheet</button>
         <button onClick={doExport} style={{background:"linear-gradient(135deg,#0F766E,#D97706)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}}>↓ Export</button>
+        <button onClick={doLogout} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Log out">Logout</button>
         <button onClick={()=>setScreen("upload")} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}}>←</button>
       </header>
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>

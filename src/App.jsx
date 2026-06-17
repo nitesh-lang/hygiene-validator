@@ -51,6 +51,20 @@ function sn(v){const s=ss(v).replace(/[₹,Rs.\s‎]/g,"");const m=s.match(/[\d]
 // "8 x 8 x 4 Centimeters" -> [8,8,4]; "8*8*4" -> [8,8,4]; "270 Grams" -> [270]; "270" -> [270]
 function numSeq(s){const m=ss(s).match(/\d+\.?\d*/g);return m?m.map(Number):[];}
 function numSeqEq(a,b){const x=numSeq(a),y=numSeq(b);if(!x.length||!y.length)return false;if(x.length!==y.length)return false;return x.every((n,i)=>Math.abs(n-y[i])<0.01);}
+// Weight in grams: "4 Kilograms"/"4 kg"=4000, "4000 g"/"4000"=4000, so 4kg matches 4000g.
+function toGrams(s){const t=ss(s).toLowerCase();const m=t.match(/(\d+\.?\d*)/);if(!m)return null;const v=parseFloat(m[1]);if(/\bkg\b|kilo/.test(t))return v*1000;if(/\bmg\b/.test(t))return v/1000;return v;/* g or bare number */}
+function weightEq(a,b){const x=toGrams(a),y=toGrams(b);if(x==null||y==null)return false;
+  // accept either same grams OR same raw number (in case both are in the same unit already)
+  if(Math.abs(x-y)<1)return true;const na=numSeq(a)[0],nb=numSeq(b)[0];return na!=null&&nb!=null&&Math.abs(na-nb)<0.01;}
+// Dimensions: convert each number to mm using a single trailing unit, compare as a set.
+function toMM(val,unit){if(/\bcm\b|centimet/.test(unit))return val*10;if(/\bm\b|meter/.test(unit)&&!/\bmm\b/.test(unit))return val*1000;if(/\bmm\b|millimet/.test(unit))return val;if(/\binch|"\b|in\b/.test(unit))return val*25.4;return val;}
+function dimsEq(a,b){
+  const na=numSeq(a),nb=numSeq(b);if(!na.length||!nb.length||na.length!==nb.length)return false;
+  const ua=ss(a).toLowerCase(),ub=ss(b).toLowerCase();
+  const ma=na.map(n=>toMM(n,ua)),mb=nb.map(n=>toMM(n,ub));
+  if(ma.every((n,i)=>Math.abs(n-mb[i])<1))return true;
+  // also accept raw-number match (same unit on both sides)
+  return na.every((n,i)=>Math.abs(n-nb[i])<0.01);}
 function isY(v){const n=nm(v);return["y","yes","correct","updated","true"].includes(n);}
 function isN(v){const n=nm(v);return["n","no","n0","incorrect","false","0"].includes(n);}
 function pipeC(s){const v=ss(s);return v?v.split("|").filter(x=>x.trim()).length:0;}
@@ -212,6 +226,8 @@ function reDecide(id, crawlVal, inputVal, mode){
     }
     case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
     case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
+      case"weight":return weightEq(c,inp)?"PASS":"FAIL";
+      case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
     case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
     case"nce":return"REVIEW";
     default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -219,7 +235,7 @@ function reDecide(id, crawlVal, inputVal, mode){
 }
 
 // Check mode lookup
-const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"num",dimensions:"num",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
+const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
 
 // ═══ VALIDATION ═══
 function validate(cr,ir){
@@ -255,6 +271,8 @@ function validate(cr,ir){
       }
       case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
       case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
+      case"weight":return weightEq(c,inp)?"PASS":"FAIL";
+      case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
       case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
       case"nce":{const sp=sn(cv("Selling Price"));if(isY(inp))return(sp&&sp>1500)?"PASS":"FAIL";if(isN(inp))return(sp&&sp<=1500)?"PASS":"FAIL";return"REVIEW";}
       default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -279,8 +297,8 @@ function validate(cr,ir){
   add("mail_qr","",iv("mail id","mail qr","support qr image"),"yn");
   add("cs_wa_qr_story","",iv("cs wa qr code in brand story","cs wa qr"),"yn");
   add("colour",cv("Colour"),iv("colour","color"),"yn");
-  add("weight",cv("Weight"),iv("iteam weight","item weight"),"num");
-  add("dimensions",cv("Dimensions"),iv("dimensions"),"num");
+  add("weight",cv("Weight"),iv("iteam weight","item weight"),"weight");
+  add("dimensions",cv("Dimensions"),iv("dimensions"),"dims");
   add("material",cv("Material"),iv("material"),"yn");
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
   add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"yn");

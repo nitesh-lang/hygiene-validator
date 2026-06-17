@@ -510,8 +510,9 @@ export default function App(){
   const saveUsersCloud=async(u)=>{try{const extra={};Object.keys(u).forEach(k=>{if(!SEED_USERS[k])extra[k]=u[k];});await window.storage.set("hv_users",JSON.stringify(extra),true);}catch{}};
   const doLogin=()=>{
     const name=loginName.trim();
-    const u=users[name];
-    if(u&&u.pw===loginPw){setAuthUser(name);setValidator(name);try{localStorage.setItem("hv_session",name);}catch{}setLoginErr("");setLoginName("");setLoginPw("");}
+    const key=Object.keys(users).find(k=>k.toLowerCase()===name.toLowerCase());
+    const u=key?users[key]:null;
+    if(u&&u.pw===loginPw){setAuthUser(key);setValidator(name);try{localStorage.setItem("hv_session",name);}catch{}setLoginErr("");setLoginName("");setLoginPw("");}
     else setLoginErr("Incorrect name or password.");
   };
   const doLogout=()=>{setAuthUser(null);try{localStorage.removeItem("hv_session");}catch{}};

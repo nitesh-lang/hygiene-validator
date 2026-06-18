@@ -434,16 +434,8 @@ function CheckRow({check,def,decision,comment,verified,onDecide,onComment,onVeri
           <div style={{fontSize:9,fontWeight:700,color:isCorrected?"#8B5CF6":T.t2,textTransform:"uppercase",fontFamily:"'DM Sans'",letterSpacing:.8,flex:1}}>
             INPUT (REFERENCE){isCorrected?" ✎":""}
           </div>
-          <button onClick={startEdit} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px",color:T.t2,lineHeight:1}} title="Edit input value">✏️</button>
         </div>
-        {editing?(
-          <div style={{display:"flex",gap:4}}>
-            <input ref={inputRef} value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit();if(e.key==="Escape"){setEditing(false);}}}
-              style={{flex:1,fontSize:12,fontFamily:"'JetBrains Mono'",padding:"4px 6px",borderRadius:4,border:`1.5px solid ${T.ac}`,outline:"none",background:"#FFF",boxSizing:"border-box"}}/>
-            <button onClick={confirmEdit} style={{background:T.ac,color:"#FFF",border:"none",borderRadius:4,padding:"4px 8px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓</button>
-            <button onClick={()=>setEditing(false)} style={{background:"#F1F5F9",color:T.t2,border:"none",borderRadius:4,padding:"4px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
-          </div>
-        ):(
+        {(
           <div style={{fontSize:12,fontFamily:"'JetBrains Mono'",color:T.t1,wordBreak:"break-word",maxHeight:60,overflow:"auto",lineHeight:1.4,background:effectiveStatus==="FAIL"&&displayInputVal?"#FEF2F2":"transparent",padding:effectiveStatus==="FAIL"&&displayInputVal?"2px 4px":0,borderRadius:3}}>
             {displayInputVal||<span style={{color:"#CBD5E1",fontStyle:"italic"}}>— empty —</span>}
           </div>
@@ -856,7 +848,7 @@ export default function App(){
             Validate {crawlData.length} ASINs →
           </button>
         </div>
-        <div style={{textAlign:"center",marginTop:16,color:"#475569",fontSize:11}}>Y/N/S = decide · ←→ navigate · D = mark done · ✏️ edit input values</div>
+        <div style={{textAlign:"center",marginTop:16,color:"#475569",fontSize:11}}>Y/N/S = decide · ←→ navigate · D = mark done</div>
       </div>
     </div>
   );
@@ -962,7 +954,7 @@ export default function App(){
                 <button key={f.k} onClick={()=>setFilter(f.k)} style={{padding:"5px 14px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",border:filter===f.k?`1.5px solid ${T.ac}`:`1.5px solid ${T.bd}`,background:filter===f.k?"#F0F9FF":"transparent",color:filter===f.k?T.ac:T.t2,fontFamily:"'DM Sans'"}}>{f.i} {f.l}</button>
               ))}
               <div style={{flex:1}}/>
-              <span style={{fontSize:10,color:T.t2,fontFamily:"'JetBrains Mono'"}}>Y/N/S · ←→ · D · ✏️ edit</span>
+              <span style={{fontSize:10,color:T.t2,fontFamily:"'JetBrains Mono'"}}>Y/N/S · ←→ · D </span>
             </div>
             {grouped.map(([gN,items])=>{const exp=expanded[gN]!==false;return<div key={gN} style={{marginBottom:12}}>
               <div onClick={()=>setExpanded(p=>({...p,[gN]:!exp}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#F8FAFC",borderRadius:8,cursor:"pointer",marginBottom:exp?8:0,border:`1px solid ${T.bd}`}}>

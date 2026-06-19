@@ -13,6 +13,11 @@ function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));}catch{}}
 function ss(v){if(v==null)return"";const s=String(v).trim();return["nan","none","nat","undefined","null","#n/a","n/a","#ref!","#value!"].includes(s.toLowerCase())?"":s;}
 function nm(s){return ss(s).toLowerCase().replace(/\s+/g," ").trim();}
 function strip(s){return ss(s).replace(/[^a-zA-Z0-9]/g,"").toLowerCase();}
+// Collapse phone numbers so "79961 35111" == "7996135111". Returns array of digit-runs (len>=8, last 10 digits).
+function phoneList(s){return [...new Set((ss(s).match(/[\d][\d\s]{6,}\d/g)||[]).map(x=>x.replace(/\D/g,"")).filter(d=>d.length>=8).map(d=>d.slice(-10)))];}
+function phonesOverlap(a,b){const pa=phoneList(a),pb=phoneList(b);if(!pa.length||!pb.length)return false;return pa.some(x=>pb.includes(x));}
+// Loose text equality: exact-normalized, OR shared phone number + some address overlap (handles spacing/format/extra-number differences in contact blocks).
+function textEqLoose(a,b){const na=nm(a),nb=nm(b);if(na===nb)return true;if(phonesOverlap(a,b)&&simRatio(a,b)>=0.35)return true;return false;}
 // Token-overlap similarity 0..1 (Jaccard on words >2 chars). Used for fuzzy text matches.
 function simRatio(a,b){
   const ta=new Set(nm(a).split(/[^a-z0-9]+/).filter(w=>w.length>2));
@@ -210,6 +215,9 @@ function reDecide(id, crawlVal, inputVal, mode){
   if(mode==="titlefmt"){if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return c?"PASS":"REVIEW";}
   if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
   if(!c&&!inp)return"REVIEW";
+  // Crawl has a value but reference is blank: for descriptive attributes there's nothing to contradict, so PASS (not a forced human decision).
+  const CRAWL_ONLY_PASS=new Set(["yn","text","weight","dims","num","img5"]);
+  if(c&&!inp)return CRAWL_ONLY_PASS.has(mode)?"PASS":"REVIEW";
   if(!c||!inp)return"REVIEW";
   switch(mode){
     case"nodding":return normNod(c)===normNod(inp)?"PASS":"FAIL";
@@ -221,9 +229,9 @@ function reDecide(id, crawlVal, inputVal, mode){
       if(isY(inp))return c.length>0?"PASS":"FAIL";
       if(isN(inp))return c.length===0?"PASS":"REVIEW";
       const cn=nm(c),hn=nm(inp);
-      return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
+      return(cn===hn||textEqLoose(c,inp)||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
     }
-    case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+    case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";if(textEqLoose(c,inp))return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
     case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
       case"weight":return weightEq(c,inp)?"PASS":"FAIL";
       case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
@@ -255,6 +263,8 @@ function validate(cr,ir){
     // 3P ASIN active: crawled live PDP confirms active; reconcile with input Y/N.
     if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
     if(!c&&!inp)return"REVIEW";
+    const CRAWL_ONLY_PASS2=new Set(["yn","text","weight","dims","num","img5"]);
+    if(c&&!inp)return CRAWL_ONLY_PASS2.has(mode)?"PASS":"REVIEW";
     if(!c||!inp)return"REVIEW";
     switch(mode){
       case"nodding":return normNod(c)===normNod(inp)?"PASS":"FAIL";
@@ -266,9 +276,9 @@ function validate(cr,ir){
         if(isY(inp))return c.length>0?"PASS":"FAIL";
         if(isN(inp))return c.length===0?"PASS":"REVIEW";
         const cn=nm(c),hn=nm(inp);
-        return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
+        return(cn===hn||textEqLoose(c,inp)||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
       }
-      case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+      case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";if(textEqLoose(c,inp))return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
       case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
       case"weight":return weightEq(c,inp)?"PASS":"FAIL";
       case"dims":return dimsEq(c,inp)?"PASS":"FAIL";

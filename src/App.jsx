@@ -492,9 +492,13 @@ export default function App(){
 
   // ═══ LOGIN / USERS (shared cloud storage) ═══
   const SEED_USERS={
-    "Naresh More":{pw:"Naresh@123",admin:false},
     "Hazique Khalique":{pw:"Hazique@123",admin:true},
+    "Naresh More":{pw:"Naresh@123",admin:false},
     "Nitesh Sharma":{pw:"Nitesh@123",admin:false},
+    "Kanwal Jeet":{pw:"Kanwal@123",admin:false},
+    "Sagar Maharana":{pw:"Sagar@123",admin:false},
+    "Unmesha Tawde":{pw:"Unmesha@123",admin:false},
+    "Sagar Sakapl":{pw:"Sagar@123",admin:false},
   };
   const[authUser,setAuthUser]=useState(null);     // logged-in full name
   const[users,setUsers]=useState(SEED_USERS);     // {name:{pw,admin}}

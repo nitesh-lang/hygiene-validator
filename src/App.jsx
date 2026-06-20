@@ -2,7 +2,7 @@ import{useState,useEffect,useCallback,useMemo,useRef}from"react";
 import*as XLSX from"xlsx";
 import Papa from"papaparse";
 
-/* AMAZON LISTING HYGIENE TOOL v3.10 — 42 Checks · 2026 Format · Backend-from-input · Rating<4 flag · Corrections DB */
+/* AMAZON LISTING HYGIENE TOOL v3.11 — 45 Checks · 2026 All-Brand Superset · Backend-from-input · Rating<4 flag · Corrections DB */
 
 if(!document.getElementById("hyg-fonts")){const l=document.createElement("link");l.id="hyg-fonts";l.href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&family=DM+Sans:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap";l.rel="stylesheet";document.head.appendChild(l);}
 
@@ -13,6 +13,11 @@ function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));}catch{}}
 function ss(v){if(v==null)return"";const s=String(v).trim();return["nan","none","nat","undefined","null","#n/a","n/a","#ref!","#value!"].includes(s.toLowerCase())?"":s;}
 function nm(s){return ss(s).toLowerCase().replace(/\s+/g," ").trim();}
 function strip(s){return ss(s).replace(/[^a-zA-Z0-9]/g,"").toLowerCase();}
+// Collapse phone numbers so "79961 35111" == "7996135111". Returns array of digit-runs (len>=8, last 10 digits).
+function phoneList(s){return [...new Set((ss(s).match(/[\d][\d\s]{6,}\d/g)||[]).map(x=>x.replace(/\D/g,"")).filter(d=>d.length>=8).map(d=>d.slice(-10)))];}
+function phonesOverlap(a,b){const pa=phoneList(a),pb=phoneList(b);if(!pa.length||!pb.length)return false;return pa.some(x=>pb.includes(x));}
+// Loose text equality: exact-normalized, OR shared phone number + some address overlap (handles spacing/format/extra-number differences in contact blocks).
+function textEqLoose(a,b){const na=nm(a),nb=nm(b);if(na===nb)return true;if(phonesOverlap(a,b)&&simRatio(a,b)>=0.35)return true;return false;}
 // Token-overlap similarity 0..1 (Jaccard on words >2 chars). Used for fuzzy text matches.
 function simRatio(a,b){
   const ta=new Set(nm(a).split(/[^a-z0-9]+/).filter(w=>w.length>2));
@@ -31,9 +36,10 @@ function warrantyYears(s){
   // explicit "N year(s)" / "N yr"
   let m=t.match(/(\d+)\s*(year|yr)/);
   if(m)return parseInt(m[1]);
-  // explicit months → keep separate (e.g. "6 months")
+  // explicit months → convert to years when a whole-year multiple (12mo=1yr, 24mo=2yr),
+  // otherwise keep as fractional years so 6mo != 1yr.
   m=t.match(/(\d+)\s*month/);
-  if(m)return -parseInt(m[1]); // negative = months, so 1yr(12) never equals 6mo
+  if(m){const mo=parseInt(m[1]);return mo/12;}
   // bare number alone (input sheet often just has "1","2","3")
   m=t.match(/^\s*(\d+)\s*$/);
   if(m)return parseInt(m[1]);
@@ -46,8 +52,26 @@ function ratingBand(s){const m=ss(s).match(/(\d+(?:\.\d+)?)/);if(!m)return"";con
 // Resolve a rating value (number OR word) to its band word, for matching both sides.
 function ratingToBand(s){const t=nm(s);if(["excellent","good","ok","mixed","poor"].includes(t))return t;return ratingBand(s);}
 function sn(v){const s=ss(v).replace(/[₹,Rs.\s‎]/g,"");const m=s.match(/[\d]+\.?\d*/);return m?parseFloat(m[0]):null;}
+// Pull every number out of a string for unit-agnostic comparison.
+// "8 x 8 x 4 Centimeters" -> [8,8,4]; "8*8*4" -> [8,8,4]; "270 Grams" -> [270]; "270" -> [270]
+function numSeq(s){const m=ss(s).match(/\d+\.?\d*/g);return m?m.map(Number):[];}
+function numSeqEq(a,b){const x=numSeq(a),y=numSeq(b);if(!x.length||!y.length)return false;if(x.length!==y.length)return false;return x.every((n,i)=>Math.abs(n-y[i])<0.01);}
+// Weight in grams: "4 Kilograms"/"4 kg"=4000, "4000 g"/"4000"=4000, so 4kg matches 4000g.
+function toGrams(s){const t=ss(s).toLowerCase();const m=t.match(/(\d+\.?\d*)/);if(!m)return null;const v=parseFloat(m[1]);if(/\bkg\b|kilo/.test(t))return v*1000;if(/\bmg\b/.test(t))return v/1000;return v;/* g or bare number */}
+function weightEq(a,b){const x=toGrams(a),y=toGrams(b);if(x==null||y==null)return false;
+  // accept either same grams OR same raw number (in case both are in the same unit already)
+  if(Math.abs(x-y)<1)return true;const na=numSeq(a)[0],nb=numSeq(b)[0];return na!=null&&nb!=null&&Math.abs(na-nb)<0.01;}
+// Dimensions: convert each number to mm using a single trailing unit, compare as a set.
+function toMM(val,unit){if(/\bcm\b|centimet/.test(unit))return val*10;if(/\bm\b|meter/.test(unit)&&!/\bmm\b/.test(unit))return val*1000;if(/\bmm\b|millimet/.test(unit))return val;if(/\binch|"\b|in\b/.test(unit))return val*25.4;return val;}
+function dimsEq(a,b){
+  const na=numSeq(a),nb=numSeq(b);if(!na.length||!nb.length||na.length!==nb.length)return false;
+  const ua=ss(a).toLowerCase(),ub=ss(b).toLowerCase();
+  const ma=na.map(n=>toMM(n,ua)),mb=nb.map(n=>toMM(n,ub));
+  if(ma.every((n,i)=>Math.abs(n-mb[i])<1))return true;
+  // also accept raw-number match (same unit on both sides)
+  return na.every((n,i)=>Math.abs(n-nb[i])<0.01);}
 function isY(v){const n=nm(v);return["y","yes","correct","updated","true"].includes(n);}
-function isN(v){const n=nm(v);return!n||["n","no","n0","incorrect","false","0"].includes(n);}
+function isN(v){const n=nm(v);return["n","no","n0","incorrect","false","0"].includes(n);}
 function pipeC(s){const v=ss(s);return v?v.split("|").filter(x=>x.trim()).length:0;}
 function cleanB(b){return ss(b).replace(/^Visit the\s+/i,"").replace(/\s+Store$/i,"").replace(/^Brand:\s*/i,"").trim();}
 const EXCL=new Set(["tonor","coleshome","n"]);
@@ -126,13 +150,12 @@ function boxFromBullets(bullets){
   return hit||(/what\s+is\s+in\s+the\s+box|what'?s\s+in\s+the\s+box/i.test(text)?"Present":"");
 }
 
-// ═══ 41 CHECKS (2026 format) ═══
+// ═══ 45 CHECKS (2026 superset — all-brand attributes) ═══
 const CK=[
   {id:"asin_active_1p",name:"1P ASIN Active (Y/N) (manual)",group:"P0 · ASIN Active",p:0},
   {id:"asin_active",name:"3P ASIN Active (Y/N)",group:"P0 · ASIN Active",p:0},
   {id:"nodding",name:"Nodding",group:"P1 · Noding",p:1},
   {id:"title",name:"Title",group:"P2 · Title Loading",p:2},
-  {id:"title_format",name:"Title Format (Brand_Model_Type_Specs)",group:"P2 · Title Loading",p:2},
   {id:"bullets_avail",name:"Bullets Available",group:"P3 · Bullet Points",p:3},
   {id:"bullets_kw",name:"Bullets: Highlight Benefits & Include Keywords",group:"P3 · Bullet Points",p:3},
   {id:"bullets_box",name:"What is In the Box (manual)",group:"P3 · Bullet Points",p:3},
@@ -170,10 +193,13 @@ const CK=[
   {id:"reviews",name:"Reviews (count)",group:"P20 · Y/M",p:20},
   {id:"aplus",name:"A+ Content (manual)",group:"P21 · A+ Y/M",p:21},
   {id:"description",name:"Description (manual)",group:"P21 · A+ Y/M",p:21},
+  {id:"comp_remarks",name:"Competitor Remarks — Nodding / Fee (manual)",group:"P22 · Competitor",p:22},
+  {id:"comp_crosscheck",name:"Cross-check Main Competitors (manual)",group:"P22 · Competitor",p:22},
+  {id:"comp_policy",name:"Policy-change Competitor ASINs (manual)",group:"P22 · Competitor",p:22},
 ];
 
 // Checks that are ALWAYS manual — they show as REVIEW for a human to decide, never auto-pass/fail.
-const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","mail_qr","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image"]);
+const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","mail_qr","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image","comp_remarks","comp_crosscheck","comp_policy"]);
 
 // ═══ RE-DECIDE STATUS for a single check ═══
 function reDecide(id, crawlVal, inputVal, mode){
@@ -189,20 +215,26 @@ function reDecide(id, crawlVal, inputVal, mode){
   if(mode==="titlefmt"){if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return c?"PASS":"REVIEW";}
   if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
   if(!c&&!inp)return"REVIEW";
+  // Crawl has a value but reference is blank: for descriptive attributes there's nothing to contradict, so PASS (not a forced human decision).
+  const CRAWL_ONLY_PASS=new Set(["yn","text","weight","dims","num","img5"]);
+  if(c&&!inp)return CRAWL_ONLY_PASS.has(mode)?"PASS":"REVIEW";
   if(!c||!inp)return"REVIEW";
   switch(mode){
     case"nodding":return normNod(c)===normNod(inp)?"PASS":"FAIL";
     case"title":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.85?"PASS":"FAIL";}
     case"warranty":{const cy=warrantyYears(c),hy=warrantyYears(inp);if(cy!==null&&hy!==null)return cy===hy?"PASS":"FAIL";const cn=nm(c),hn=nm(inp);return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";}
     case"return":{const a=returnKind(c),b=returnKind(inp);if(a.repl!==b.repl||a.ret!==b.ret)return"FAIL";if(a.days&&b.days&&a.days!==b.days)return"FAIL";return"PASS";}
-    case"rating":{const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"REVIEW":"FAIL";}
+    case"rating":{const rv=parseFloat((ss(c).match(/(\d+(?:\.\d+)?)/)||[])[1]);if(!isNaN(rv)&&rv<4)return"FAIL";const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"PASS":"REVIEW";}
     case"yn":{
       if(isY(inp))return c.length>0?"PASS":"FAIL";
       if(isN(inp))return c.length===0?"PASS":"REVIEW";
       const cn=nm(c),hn=nm(inp);
-      return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
+      return(cn===hn||textEqLoose(c,inp)||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
     }
-    case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+    case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";if(textEqLoose(c,inp))return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+    case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
+      case"weight":return weightEq(c,inp)?"PASS":"FAIL";
+      case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
     case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
     case"nce":return"REVIEW";
     default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -210,7 +242,7 @@ function reDecide(id, crawlVal, inputVal, mode){
 }
 
 // Check mode lookup
-const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"yn",dimensions:"yn",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn"};
+const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
 
 // ═══ VALIDATION ═══
 function validate(cr,ir){
@@ -231,20 +263,25 @@ function validate(cr,ir){
     // 3P ASIN active: crawled live PDP confirms active; reconcile with input Y/N.
     if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
     if(!c&&!inp)return"REVIEW";
+    const CRAWL_ONLY_PASS2=new Set(["yn","text","weight","dims","num","img5"]);
+    if(c&&!inp)return CRAWL_ONLY_PASS2.has(mode)?"PASS":"REVIEW";
     if(!c||!inp)return"REVIEW";
     switch(mode){
       case"nodding":return normNod(c)===normNod(inp)?"PASS":"FAIL";
       case"title":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.85?"PASS":"FAIL";}
       case"warranty":{const cy=warrantyYears(c),hy=warrantyYears(inp);if(cy!==null&&hy!==null)return cy===hy?"PASS":"FAIL";const cn=nm(c),hn=nm(inp);return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";}
       case"return":{const a=returnKind(c),b=returnKind(inp);if(a.repl!==b.repl||a.ret!==b.ret)return"FAIL";if(a.days&&b.days&&a.days!==b.days)return"FAIL";return"PASS";}
-      case"rating":{const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"REVIEW":"FAIL";}
+      case"rating":{const rv=parseFloat((ss(c).match(/(\d+(?:\.\d+)?)/)||[])[1]);if(!isNaN(rv)&&rv<4)return"FAIL";const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"PASS":"REVIEW";}
       case"yn":{
         if(isY(inp))return c.length>0?"PASS":"FAIL";
         if(isN(inp))return c.length===0?"PASS":"REVIEW";
         const cn=nm(c),hn=nm(inp);
-        return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
+        return(cn===hn||textEqLoose(c,inp)||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
       }
-      case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+      case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";if(textEqLoose(c,inp))return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
+      case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
+      case"weight":return weightEq(c,inp)?"PASS":"FAIL";
+      case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
       case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
       case"nce":{const sp=sn(cv("Selling Price"));if(isY(inp))return(sp&&sp>1500)?"PASS":"FAIL";if(isN(inp))return(sp&&sp<=1500)?"PASS":"FAIL";return"REVIEW";}
       default:return nm(c)===nm(inp)?"PASS":"FAIL";
@@ -256,21 +293,20 @@ function validate(cr,ir){
   add("asin_active",cv("Title")||cv("Sold By")?"Live":"",iv("asin active(yes","asin active"),"active");
   add("nodding",cv("Category Tree"),iv("correct nodding","nodding on pdp"),"nodding");
   add("title",cv("Title"),iv("title name"),"title");
-  add("title_format",titleFormatOk(cv("Title"),cv("Brand"),iv("model name")||cr.SKU)?"Format OK":"",iv("title correct","product title format"),"titlefmt");
   const bul=cv("Bullets");
-  add("bullets_avail",bul?"Present":"",iv("bullet points available"),"yn");
-  add("bullets_kw",bul?"Present":"",iv("bullets highlight benefit","bullets highlight benefits"),"yn");
+  add("bullets_avail",bul||"",iv("bullet points available"),"yn");
+  add("bullets_kw",bul||"",iv("bullets highlight benefit","bullets highlight benefits"),"yn");
   add("bullets_box",cv("What is in the box?")||boxFromBullets(bul),iv("what is in the box in bullet","what is in the box"),"yn");
   add("warranty",cv("Warranty Policy")||cv("Warranty Description"),iv("correct warranty","warranty  on panel","warranty on panel"),"warranty");
   add("warranty_bullet",/warrant/i.test(bul)?"Present in bullets":"Not in bullets",iv("warranty on bullet point","warranty on bullet points"),"yn");
   add("warranty_desc",cv("Warranty Description")||cv("Warranty Policy"),iv("warranty  on panel","warranty on panel","warranty description"),"text");
   add("brand_story",cv("Brand Story"),iv("product added in brand story","brand story"),"yn");
-  add("brand_store",cv("Brand Story")?"Present":"",iv("product added in brand store","brand store"),"yn");
+  add("brand_store",cv("Brand Store")||(cv("Brand Story")?"Present (story only)":""),iv("product added in brand store","brand store","from the brand section"),"yn");
   add("mail_qr","",iv("mail id","mail qr","support qr image"),"yn");
   add("cs_wa_qr_story","",iv("cs wa qr code in brand story","cs wa qr"),"yn");
   add("colour",cv("Colour"),iv("colour","color"),"yn");
-  add("weight",cv("Weight"),iv("iteam weight","item weight"),"yn");
-  add("dimensions",cv("Dimensions"),iv("dimensions"),"yn");
+  add("weight",cv("Weight"),iv("iteam weight","item weight"),"weight");
+  add("dimensions",cv("Dimensions"),iv("dimensions"),"dims");
   add("material",cv("Material"),iv("material"),"yn");
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
   add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"yn");
@@ -280,28 +316,34 @@ function validate(cr,ir){
   add("return_policy",cv("Return Policy"),iv("correct return policy","return policy on page"),"return");
   add("fee_category","",iv("fee category in backend","correct fee category"),"backend");
   add("ref_fees","",iv("ref fees in the backend","ref fees in the backedn","correct ref fees"),"backend");
-  add("variation",cv("Variation Data"),iv("correct variation","variation on pdp","variation"),"yn");
+  add("variation",cv("Variation Data")||(cv("Variation Count")&&cv("Variation Count")!=="0"?`${cv("Variation Count")} variations`:""),iv("correct variation","variation on pdp","variation"),"yn");
   add("variation_theme",cv("Variation Data"),iv("variation name basis on theme","variation name theme"),"yn");
-  const ic=pipeC(cv("Image URLs"));
+  const ic=pipeC(cv("Image URLs"))||parseInt(cv("Image Count"))||0;
   add("images_5",String(ic),iv("images - minimum"),"img5");
-  add("feature_img",ic>0?"Present":"",iv("feature image"),"yn");
-  add("lifestyle_img",ic>0?"Present":"",iv("lifestyle image"),"yn");
+  add("feature_img",ic>0?`${ic} images on PDP`:"",iv("feature image"),"yn");
+  add("lifestyle_img",ic>=5?`${ic} images (likely incl. lifestyle)`:(ic>0?`${ic} images`:""),iv("lifestyle image"),"yn");
   add("cs_image","",iv("customer support image","support qr image","warranty image"),"yn");
   add("box_image","",iv("what is in the box image","what's in the box image"),"yn");
   add("box_contents",cv("What is in the box?"),iv("what's in the box (box contents)","box contents","what's in the box"),"yn");
   add("ours_vs_their","",iv("ours vs their"),"yn");
-  add("listing_video",cv("Listing Video"),iv("listing video","influencer video"),"yn");
+  add("listing_video",cv("Listing Video")?`Present${cv("Video Count")&&cv("Video Count")!=="0"?` · ${cv("Video Count")} video(s)`:""}`:"",iv("listing video","influencer video"),"yn");
   add("nce",cv("Selling Price"),iv("nce (sp","nce"),"nce");
   const rat=cv("Rating");
   const ratBand=ratingBand(rat);
   const ratInp=iv("ratings","rating");
   const ratInpBand=ratingToBand(ratInp);
   // Show "value → band" on both sides so the validator sees the word mapping.
-  const ratInpDisplay=ratInp?(ratInpBand&&!/excellent|good|ok|mixed|poor/i.test(ratInp)?`${ratInp} → ${ratInpBand}`:ratInp):"";
-  add("ratings_reviews",rat?(ratBand?`${rat} → ${ratBand}`:rat):"",ratInpDisplay,"rating");
-  add("reviews",cv("Rating Count")?`${cv("Rating Count")} reviews`:"",iv("review"),"reviews");
-  add("aplus",cv("A+ Content")?"Present":"",iv("a+ (y","a+ y"),"yn");
+  const ratCrawlDisplay=rat?(ratBand?`${rat} → ${ratBand}`:rat):"";
+  const ratInpDisplay=ratInp?(ratInpBand&&!/excellent|good|ok|mixed|poor/i.test(ratInp)?`${ratInp} → ${ratInpBand}`:ratInp):ratCrawlDisplay; // mirror crawl when input blank
+  add("ratings_reviews",ratCrawlDisplay,ratInpDisplay,"rating");
+  const revCrawl=cv("Rating Count")?`${cv("Rating Count")} reviews`:"";
+  add("reviews",revCrawl,iv("review")||revCrawl,"reviews"); // mirror crawl when input blank
+  add("aplus",cv("A+ Content")?`Present${cv("A+ Image Count")&&cv("A+ Image Count")!=="0"?` · ${cv("A+ Image Count")} imgs`:""}`:"",iv("a+ (y","a+ y"),"yn");
   add("description",cv("Description"),iv("description / a+","description/a+"),"yn");
+  // Competitor-research columns — always manual review, sourced from input sheet notes.
+  add("comp_remarks","",iv("other competitor remarks for nodding","competitor remarks"),"yn");
+  add("comp_crosscheck","",iv("cross check other main competitors","cross check competitors"),"yn");
+  add("comp_policy","",iv("policy changes competitor asin","policy changes competitor"),"yn");
   return R;
 }
 
@@ -402,16 +444,8 @@ function CheckRow({check,def,decision,comment,verified,onDecide,onComment,onVeri
           <div style={{fontSize:9,fontWeight:700,color:isCorrected?"#8B5CF6":T.t2,textTransform:"uppercase",fontFamily:"'DM Sans'",letterSpacing:.8,flex:1}}>
             INPUT (REFERENCE){isCorrected?" ✎":""}
           </div>
-          <button onClick={startEdit} style={{background:"none",border:"none",cursor:"pointer",fontSize:13,padding:"0 2px",color:T.t2,lineHeight:1}} title="Edit input value">✏️</button>
         </div>
-        {editing?(
-          <div style={{display:"flex",gap:4}}>
-            <input ref={inputRef} value={editVal} onChange={e=>setEditVal(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")confirmEdit();if(e.key==="Escape"){setEditing(false);}}}
-              style={{flex:1,fontSize:12,fontFamily:"'JetBrains Mono'",padding:"4px 6px",borderRadius:4,border:`1.5px solid ${T.ac}`,outline:"none",background:"#FFF",boxSizing:"border-box"}}/>
-            <button onClick={confirmEdit} style={{background:T.ac,color:"#FFF",border:"none",borderRadius:4,padding:"4px 8px",fontSize:11,fontWeight:700,cursor:"pointer"}}>✓</button>
-            <button onClick={()=>setEditing(false)} style={{background:"#F1F5F9",color:T.t2,border:"none",borderRadius:4,padding:"4px 8px",fontSize:11,cursor:"pointer"}}>✗</button>
-          </div>
-        ):(
+        {(
           <div style={{fontSize:12,fontFamily:"'JetBrains Mono'",color:T.t1,wordBreak:"break-word",maxHeight:60,overflow:"auto",lineHeight:1.4,background:effectiveStatus==="FAIL"&&displayInputVal?"#FEF2F2":"transparent",padding:effectiveStatus==="FAIL"&&displayInputVal?"2px 4px":0,borderRadius:3}}>
             {displayInputVal||<span style={{color:"#CBD5E1",fontStyle:"italic"}}>— empty —</span>}
           </div>
@@ -455,6 +489,48 @@ export default function App(){
 
   const crRef=useRef(null),inRef=useRef(null);
   const addLog=(m)=>setLog(p=>p+(p?"\n":"")+m);
+
+  // ═══ LOGIN / USERS (shared cloud storage) ═══
+  const SEED_USERS={
+    "Naresh More":{pw:"Naresh@123",admin:false},
+    "Hazique Khalique":{pw:"Hazique@123",admin:true},
+    "Nitesh Sharma":{pw:"Nitesh@123",admin:false},
+  };
+  const[authUser,setAuthUser]=useState(null);     // logged-in full name
+  const[users,setUsers]=useState(SEED_USERS);     // {name:{pw,admin}}
+  const[loginName,setLoginName]=useState("");
+  const[loginPw,setLoginPw]=useState("");
+  const[loginErr,setLoginErr]=useState("");
+  const[showAddUser,setShowAddUser]=useState(false);
+  const[newU,setNewU]=useState({name:"",pw:""});
+  // Load users from localStorage (merge with seeds so the 3 always exist). Works on Render.
+  useEffect(()=>{try{const s=localStorage.getItem("hv_users");if(s){const saved=JSON.parse(s);setUsers({...SEED_USERS,...saved});}}catch{}},[]);
+  // Remember the session locally so a refresh keeps you logged in.
+  useEffect(()=>{try{const s=localStorage.getItem("hv_session");if(s)setAuthUser(s);}catch{}},[]);
+  const saveUsers=(u)=>{try{const extra={};Object.keys(u).forEach(k=>{if(!SEED_USERS[k])extra[k]=u[k];});localStorage.setItem("hv_users",JSON.stringify(extra));}catch{}};
+  const doLogin=()=>{
+    const name=loginName.trim();
+    const key=Object.keys(users).find(k=>k.toLowerCase()===name.toLowerCase());
+    const u=key?users[key]:null;
+    if(u&&u.pw===loginPw){setAuthUser(key);setValidator(name);try{localStorage.setItem("hv_session",name);}catch{}setLoginErr("");setLoginName("");setLoginPw("");}
+    else setLoginErr("Incorrect name or password.");
+  };
+  const doLogout=()=>{setAuthUser(null);try{localStorage.removeItem("hv_session");}catch{}};
+  const addUser=async()=>{
+    const n=newU.name.trim().replace(/\s+/g," ");
+    if(!n){alert("Enter a name.");return;}
+    if(!newU.pw||newU.pw.length<4){alert("Password must be at least 4 characters.");return;}
+    if(Object.keys(users).some(k=>k.toLowerCase()===n.toLowerCase())){alert(`"${n}" already exists.`);return;}
+    const next={...users,[n]:{pw:newU.pw,admin:false}};
+    setUsers(next);saveUsers(next);setNewU({name:"",pw:""});setShowAddUser(false);
+  };
+  const removeUser=async(name)=>{
+    if(SEED_USERS[name]){alert("Built-in users can't be removed.");return;}
+    if(!window.confirm(`Remove user "${name}"?`))return;
+    const next={...users};delete next[name];setUsers(next);saveUsers(next);
+  };
+  const isAdmin=authUser&&users[authUser]?.admin;
+
 
   useEffect(()=>{const d=ldLS();if(d){if(d.asinSt)setAsinSt(d.asinSt);if(d.validator)setValidator(d.validator);if(d.curBrand)setCurBrand(d.curBrand);if(d.corrections)setCorrections(d.corrections);}},[]);
   useEffect(()=>{if(Object.keys(asinSt).length>0)svLS({asinSt,validator,curBrand,curIdx,corrections});},[asinSt,validator,curBrand,curIdx,corrections]);
@@ -565,10 +641,26 @@ export default function App(){
   const brands=useMemo(()=>{const m={};products.forEach(p=>{if(!m[p.brand])m[p.brand]={total:0,done:0,withInput:0,pass:0,fail:0,rev:0};m[p.brand].total++;if(p.hasInput)m[p.brand].withInput++;m[p.brand].pass+=p.pass;m[p.brand].fail+=p.fail;m[p.brand].rev+=p.review;if(asinSt[p.asin]?.done)m[p.brand].done++;});return m;},[products,asinSt]);
   const filtered=useMemo(()=>{let l=curBrand==="ALL"?products:products.filter(p=>p.brand===curBrand);if(hideDone)l=l.filter(p=>!asinSt[p.asin]?.done);return l;},[products,curBrand,hideDone,asinSt]);
   const cur=filtered[curIdx]||null;
-  const getA=a=>asinSt[a]||{decisions:{},comments:{},verified:{},done:false,notes:""};
-  const setA=(a,fn)=>setAsinSt(p=>({...p,[a]:fn(p[a]||{decisions:{},comments:{},verified:{},done:false,notes:""})}));
+  const getA=a=>asinSt[a]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
+  const setA=(a,fn)=>setAsinSt(p=>{const prev=p[a]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};const upd=fn(prev);return{...p,[a]:{...upd,by:authUser||upd.by||""}};});
   const goN=()=>setCurIdx(i=>Math.min(i+1,filtered.length-1));
   const goP=()=>setCurIdx(i=>Math.max(i-1,0));
+  // Save & Next: mark current ASIN done (progress auto-saves already) then jump to next.
+  const saveAndNext=()=>{
+    if(!cur)return;
+    setA(cur.asin,s=>({...s,done:true}));
+    setCurIdx(i=>Math.min(i+1,filtered.length-1));
+    window.scrollTo({top:0,behavior:"smooth"});
+  };
+  // Search by ASIN: jump to the matching ASIN in the current filtered list.
+  const[asinSearch,setAsinSearch]=useState("");
+  const jumpToAsin=(q)=>{
+    const term=ss(q).toUpperCase().trim();
+    if(!term)return;
+    const i=filtered.findIndex(p=>ss(p.asin).toUpperCase().includes(term));
+    if(i>=0){setCurIdx(i);window.scrollTo({top:0,behavior:"smooth"});}
+    else alert(`ASIN "${q}" not found in the ${curBrand==="ALL"?"":curBrand+" "}list.`);
+  };
   // Mark done — but warn if checks are still undecided. Toggling OFF is always allowed.
   const toggleDone=()=>{
     if(!cur)return;
@@ -629,7 +721,7 @@ export default function App(){
 
   const doExport=()=>{
     const rows=[];
-    products.forEach((p,i)=>{const a=getA(p.asin);const row={Sr:i+1,Brand:p.brand,ASIN:p.asin,Title:p.title?.slice(0,80),Score:p.score+"%",Pass:p.pass,Fail:p.fail,Review:p.review,Reviewed:a.done?"Yes":"No"};
+    products.forEach((p,i)=>{const a=getA(p.asin);const row={Sr:i+1,Brand:p.brand,ASIN:p.asin,Title:p.title?.slice(0,80),Score:p.score+"%",Pass:p.pass,Fail:p.fail,Review:p.review,Reviewed:a.done?"Yes":"No","Validated By":a.by||"-"};
       p.checks.forEach(ck=>{const d=CK.find(x=>x.id===ck.id);const n=d?.name||ck.id;
         const cv=getCorrectedVal(p.asin,ck.id,ck.inputVal);
         const corrected=cv!==undefined&&cv!==ck.origInputVal;
@@ -639,6 +731,64 @@ export default function App(){
         row[`Manual_${n}`]=a.decisions[ck.id]||"—";row[`Comment_${n}`]=a.comments[ck.id]||"";});
       row.Notes=a.notes||"";rows.push(row);});
     const ws=XLSX.utils.json_to_sheet(rows);const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Hygiene Report");XLSX.writeFile(wb,`hygiene_export_${new Date().toISOString().slice(0,10)}.xlsx`);
+  };
+
+  // Read the crawl value for a given check id off the product's checks.
+  function crawlOf(p,id){const ck=p.checks.find(c=>c.id===id);return ck?ss(ck.crawlVal):"";}
+  function inputOf(p,id){const ck=p.checks.find(c=>c.id===id);return ck?ss(ck.inputVal):"";}
+  function decOf(p,id){const a=getA(p.asin);const m=a.decisions[id];if(m&&m!=="Not Sure")return m;const ck=p.checks.find(c=>c.id===id);return ck?ck.status:"";}
+  const doExportSheet=()=>{
+    // [header, fn] using crawl values (source of truth from live PDP).
+    const COLS=[
+      ["Brand",p=>p.brand],["SKU",p=>inputOf(p,"title")&&""||""],["ASIN",p=>p.asin],
+      ["Model Name",p=>inputOf(p,"title_format")],
+      ["Correct Nodding for reference",p=>crawlOf(p,"nodding")],
+      ["Title Name",p=>crawlOf(p,"title")],
+      ["NCE (SP > 1500)",p=>crawlOf(p,"nce")],
+      ["Ratings",p=>crawlOf(p,"ratings_reviews")],["Review ",p=>crawlOf(p,"reviews")],
+      ["Images - minimum 5",p=>crawlOf(p,"images_5")],
+      ["Feature images",p=>crawlOf(p,"feature_img")],
+      ["Lifestyle images present or not - also can refer to other competitors",p=>crawlOf(p,"lifestyle_img")],
+      ["Customer Support Image",p=>crawlOf(p,"cs_image")],
+      ["What is in the box image",p=>crawlOf(p,"box_image")],
+      ["Ours vs Their Image",p=>crawlOf(p,"ours_vs_their")],
+      ["Listing video (Y/N)",p=>crawlOf(p,"listing_video")],
+      ["Influencer Video",()=>""],
+      ["Correct Variations",p=>crawlOf(p,"variation")],
+      ["Variation on PDP",p=>crawlOf(p,"variation")],
+      ["Bullet points available - Yes or No(if any changes required can highlight here)",p=>crawlOf(p,"bullets_avail")?"Yes":"No"],
+      ["Bullets highlight benefits & include keywords",p=>crawlOf(p,"bullets_kw")],
+      ["What is in the Box In bullet point",p=>crawlOf(p,"bullets_box")],
+      ["Correct Warranty",p=>crawlOf(p,"warranty")],
+      ["Warranty  on panel",p=>crawlOf(p,"warranty_desc")],
+      ["correct and incorrect ",p=>decOf(p,"warranty")],
+      ["Product added in brand store",p=>crawlOf(p,"brand_store")?"Yes":"No"],
+      ["Product added in brand Story",p=>crawlOf(p,"brand_story")?"Yes":"No"],
+      ["CS WA Qr Code in brand Story",p=>crawlOf(p,"cs_wa_qr_story")],
+      ["A+ (Y/N)",p=>crawlOf(p,"aplus")?"Yes":"No"],
+      ["Description / A+ Content",p=>crawlOf(p,"description")],
+      ["Colour",p=>crawlOf(p,"colour")],["Material ",p=>crawlOf(p,"material")],
+      ["What's in the box (Box Contents)",p=>crawlOf(p,"box_contents")],
+      ["Iteam Weight",p=>crawlOf(p,"weight")],["Dimensions",p=>crawlOf(p,"dimensions")],
+      ["Mfg details",p=>crawlOf(p,"manufacturer")],
+      ["Packer details",p=>crawlOf(p,"packer")],
+      ["Importer details",p=>crawlOf(p,"importer")],
+      ["Additional Features",p=>crawlOf(p,"addl_features")],
+      ["Backend search terms",p=>inputOf(p,"backend_kw")],
+      ["Correct Return Policy",p=>crawlOf(p,"return_policy")],
+      ["Return policy on page",p=>crawlOf(p,"return_policy")],
+      ["Correct Fee Category",p=>inputOf(p,"fee_category")],
+      ["Fee category in backend (Correct/Incorrect)",p=>decOf(p,"fee_category")],
+      ["Correct Ref fees",p=>inputOf(p,"ref_fees")],
+      ["Ref fees in the backend (Correct/Incorrect)",p=>decOf(p,"ref_fees")],
+      ["Other competitor remarks for Nodding, Fee category",()=>""],
+      ["Cross check other main competitors if any changes (Done)",()=>""],
+      ["Policy changes competitor asin's",()=>""],
+    ];
+    const data=products.map(p=>{const o={};COLS.forEach(([h,fn])=>{try{o[h]=fn(p);}catch{o[h]="";}});return o;});
+    const ws=XLSX.utils.json_to_sheet(data,{header:COLS.map(c=>c[0])});
+    const wb=XLSX.utils.book_new();XLSX.utils.book_append_sheet(wb,ws,"Format");
+    XLSX.writeFile(wb,`Hygiene_Completed_Sheet_${new Date().toISOString().slice(0,10)}.xlsx`);
   };
 
   const grouped=useMemo(()=>{if(!cur)return[];const g={};cur.checks.forEach(ck=>{const d=CK.find(x=>x.id===ck.id);if(!d)return;if(!g[d.group])g[d.group]=[];g[d.group].push({check:ck,def:d});});if(filter!=="all"){const t=filter==="review"?"REVIEW":filter==="failed"?"FAIL":"PASS";Object.keys(g).forEach(k=>{
@@ -663,12 +813,27 @@ export default function App(){
   const corrCount=Object.keys(corrections.global).length+Object.values(corrections.byAsin).reduce((s,o)=>s+Object.keys(o).length,0);
 
   // ═══ UPLOAD SCREEN ═══
+  if(!authUser)return(
+    <div style={{minHeight:"100vh",background:T.hd,display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"system-ui,sans-serif"}}>
+      <div style={{background:T.card,borderRadius:16,padding:"40px 36px",width:340,boxShadow:"0 20px 60px rgba(0,0,0,.4)"}}>
+        <div style={{fontSize:22,fontWeight:800,color:T.ac,marginBottom:4}}>Hygiene Validator</div>
+        <div style={{fontSize:13,color:T.t2,marginBottom:24}}>Sign in to continue</div>
+        <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Full Name</label>
+        <input value={loginName} onChange={e=>setLoginName(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doLogin();}} placeholder="e.g. Naresh More" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"10px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+        <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Password</label>
+        <input type="password" value={loginPw} onChange={e=>setLoginPw(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")doLogin();}} placeholder="••••••••" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"10px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+        {loginErr&&<div style={{color:"#DC2626",fontSize:12,marginBottom:12}}>{loginErr}</div>}
+        <button onClick={doLogin} style={{width:"100%",background:T.ac,color:"#FFF",border:"none",borderRadius:8,padding:"11px",fontSize:14,fontWeight:700,cursor:"pointer"}}>Sign In</button>
+      </div>
+    </div>
+  );
+
   if(screen==="upload")return(
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#071A18 0%,#0B2F2A 48%,#172033 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans',sans-serif",padding:20}}>
       <div style={{maxWidth:640,width:"100%"}}>
         <div style={{textAlign:"center",marginBottom:40}}>
           <div style={{fontSize:36,fontWeight:800,fontFamily:"'Outfit'",background:"linear-gradient(135deg,#5EEAD4,#FDE68A,#A7F3D0)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent",marginBottom:8}}>Listing Hygiene Validator</div>
-          <div style={{color:"#C7DAD5",fontSize:14}}>Amazon PDP Audit · 33 Checks · 20 Priority Groups</div>
+          <div style={{color:"#C7DAD5",fontSize:14}}>Amazon PDP Audit · {CK.length} Checks · {new Set(CK.map(c=>c.group)).size} Priority Groups</div>
           <div style={{color:"#7F9E98",fontSize:11,marginTop:8}}>PASS = match confirmed · FAIL = mismatch found · REVIEW = validator decision needed</div>
           {corrCount>0&&<div style={{color:"#A78BFA",fontSize:12,marginTop:8,fontWeight:600}}>📦 {corrCount} corrections in database — will auto-apply on validate</div>}
         </div>
@@ -695,7 +860,7 @@ export default function App(){
             Validate {crawlData.length} ASINs →
           </button>
         </div>
-        <div style={{textAlign:"center",marginTop:16,color:"#475569",fontSize:11}}>Y/N/S = decide · ←→ navigate · D = mark done · ✏️ edit input values</div>
+        <div style={{textAlign:"center",marginTop:16,color:"#475569",fontSize:11}}>Y/N/S = decide · ←→ navigate · D = mark done</div>
       </div>
     </div>
   );
@@ -704,15 +869,35 @@ export default function App(){
   return(
     <div style={{minHeight:"100vh",background:T.bg,fontFamily:"'DM Sans',sans-serif",display:"flex",flexDirection:"column"}}>
       {corrModal&&<CorrectionModal checkName={corrModal.checkName} asin={corrModal.asin} origVal={corrModal.origVal} newVal={corrModal.newVal} onApply={applyCorrection} onCancel={()=>setCorrModal(null)}/>}
+      {showAddUser&&<div style={{position:"fixed",inset:0,background:"rgba(0,0,0,.5)",display:"flex",alignItems:"center",justifyContent:"center",zIndex:1000}} onClick={()=>setShowAddUser(false)}>
+        <div onClick={e=>e.stopPropagation()} style={{background:"#FFF",borderRadius:14,padding:28,width:360}}>
+          <div style={{fontSize:18,fontWeight:800,color:T.ac,marginBottom:16}}>Manage Users</div>
+          <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Full Name</label>
+          <input value={newU.name} onChange={e=>setNewU({...newU,name:e.target.value})} placeholder="e.g. Priya Singh" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 12px",padding:"9px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+          <label style={{fontSize:12,fontWeight:600,color:T.t2}}>Password</label>
+          <input value={newU.pw} onChange={e=>setNewU({...newU,pw:e.target.value})} placeholder="e.g. Priya@123" style={{width:"100%",boxSizing:"border-box",margin:"6px 0 16px",padding:"9px 12px",border:`1px solid ${T.bd}`,borderRadius:8,fontSize:14}}/>
+          <button onClick={addUser} style={{width:"100%",background:T.ac,color:"#FFF",border:"none",borderRadius:8,padding:"10px",fontWeight:700,cursor:"pointer",fontSize:14}}>Add User</button>
+          <div style={{marginTop:18,maxHeight:160,overflowY:"auto"}}>
+            {Object.keys(users).map(n=>(<div key={n} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderTop:`1px solid ${T.bd}`,fontSize:13}}>
+              <span>{n}{users[n].admin?" (admin)":""}</span>
+              {!SEED_USERS[n]&&<button onClick={()=>removeUser(n)} style={{background:"none",border:"none",color:"#DC2626",cursor:"pointer",fontSize:12}}>Remove</button>}
+            </div>))}
+          </div>
+          <button onClick={()=>setShowAddUser(false)} style={{marginTop:14,width:"100%",background:"#F1F5F9",border:"none",borderRadius:8,padding:"9px",cursor:"pointer",fontSize:13,fontWeight:600,color:T.t1}}>Close</button>
+        </div>
+      </div>}
       <header style={{background:T.hd,padding:"0 20px",height:56,display:"flex",alignItems:"center",gap:16,boxShadow:"0 2px 16px rgba(11,31,30,.22)",position:"sticky",top:0,zIndex:100,borderBottom:"1px solid rgba(94,234,212,.16)"}}>
         <span style={{fontFamily:"'Outfit'",fontWeight:800,fontSize:18,background:"linear-gradient(135deg,#5EEAD4,#FDE68A)",WebkitBackgroundClip:"text",WebkitTextFillColor:"transparent"}}>Hygiene Validator v3.10</span>
         <span style={{color:"#64748B",fontSize:12}}>{ov.done}/{ov.total} ({ov.pct}%)</span>
         {corrCount>0&&<span style={{color:"#A78BFA",fontSize:10,fontWeight:600,background:"#1E1B4B",padding:"2px 8px",borderRadius:4}}>📦 {corrCount} fixes</span>}
         <div style={{flex:1}}/>
-        <input value={validator} onChange={e=>setValidator(e.target.value)} placeholder="Validator" style={{background:"#1E293B",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#E2E8F0",fontSize:12,width:120,outline:"none",fontFamily:"'DM Sans'"}}/>
+        <span style={{color:"#94A3B8",fontSize:12,fontWeight:600}}>👤 {authUser}</span>
+        {isAdmin&&<button onClick={()=>setShowAddUser(true)} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Add a user">+ User</button>}
         <button onClick={backup} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Backup JSON (includes corrections)">💾</button>
         <button onClick={exportCorrections} style={{background:"none",border:"1px solid #7C3AED",borderRadius:6,padding:"4px 12px",color:"#A78BFA",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export corrections DB as Excel">📦</button>
+        <button onClick={doExportSheet} style={{background:"linear-gradient(135deg,#1D4ED8,#0F766E)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}} title="Export in your team's input-sheet format">↓ Sheet</button>
         <button onClick={doExport} style={{background:"linear-gradient(135deg,#0F766E,#D97706)",border:"none",borderRadius:6,padding:"4px 14px",color:"#FFF",cursor:"pointer",fontSize:12,fontWeight:600}}>↓ Export</button>
+        <button onClick={doLogout} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 10px",color:"#94A3B8",cursor:"pointer",fontSize:12}} title="Log out">Logout</button>
         <button onClick={()=>setScreen("upload")} style={{background:"none",border:"1px solid #334155",borderRadius:6,padding:"4px 12px",color:"#94A3B8",cursor:"pointer",fontSize:12}}>←</button>
       </header>
       <div style={{display:"flex",flex:1,overflow:"hidden"}}>
@@ -764,6 +949,8 @@ export default function App(){
                 <button onClick={goP} disabled={curIdx===0} style={{background:"#F1F5F9",border:"none",borderRadius:6,padding:"6px 14px",cursor:curIdx===0?"not-allowed":"pointer",fontSize:13,fontWeight:600,color:T.t1}}>← Prev</button>
                 <span style={{fontSize:12,color:T.t2}}>{curIdx+1}/{filtered.length}</span>
                 <button onClick={goN} disabled={curIdx>=filtered.length-1} style={{background:"#F1F5F9",border:"none",borderRadius:6,padding:"6px 14px",cursor:curIdx>=filtered.length-1?"not-allowed":"pointer",fontSize:13,fontWeight:600,color:T.t1}}>Next →</button>
+                <input value={asinSearch} onChange={e=>setAsinSearch(e.target.value)} onKeyDown={e=>{if(e.key==="Enter")jumpToAsin(asinSearch);}} placeholder="Search ASIN…" style={{background:"#FFF",border:`1px solid ${T.bd}`,borderRadius:6,padding:"6px 10px",fontSize:12,width:130,color:T.t1,fontFamily:"'JetBrains Mono',monospace"}}/>
+                <button onClick={()=>jumpToAsin(asinSearch)} style={{background:T.ac,border:"none",borderRadius:6,padding:"6px 12px",cursor:"pointer",fontSize:12,fontWeight:600,color:"#FFF"}}>Go</button>
                 <div style={{flex:1}}/>
                 <label style={{fontSize:11,color:T.t2,display:"flex",alignItems:"center",gap:4,cursor:"pointer"}}><input type="checkbox" checked={hideDone} onChange={e=>setHideDone(e.target.checked)} style={{accentColor:T.ac}}/>Hide done</label>
                 {pendingCount>0
@@ -772,13 +959,14 @@ export default function App(){
                 <button onClick={toggleDone} style={{background:as?.done?T.pass:"#F1F5F9",color:as?.done?"#FFF":T.t1,border:"none",borderRadius:6,padding:"6px 14px",cursor:"pointer",fontSize:12,fontWeight:600,transition:"all .2s"}}>{as?.done?"✓ Done":"Mark Done"}</button>
               </div>
               <input value={as?.notes||""} onChange={e=>setA(cur.asin,s=>({...s,notes:e.target.value}))} placeholder="Notes for this ASIN..." style={{width:"100%",marginTop:10,padding:"6px 10px",borderRadius:6,border:`1px solid ${T.bd}`,fontSize:12,outline:"none",fontFamily:"'DM Sans'",boxSizing:"border-box"}}/>
+              {as?.by&&<div style={{marginTop:6,fontSize:11,color:T.t2}}>Validated by: <b>{as.by}</b></div>}
             </div>
             <div style={{display:"flex",gap:8,marginBottom:14,alignItems:"center",flexWrap:"wrap",background:"#FBFEFD",border:`1px solid ${T.bd}`,borderRadius:10,padding:10}}>
               {[{k:"all",l:"All",i:""},{k:"review",l:"Review",i:"⚠"},{k:"failed",l:"Failed",i:"✗"},{k:"passed",l:"Passed",i:"✓"}].map(f=>(
                 <button key={f.k} onClick={()=>setFilter(f.k)} style={{padding:"5px 14px",borderRadius:6,fontSize:12,fontWeight:600,cursor:"pointer",border:filter===f.k?`1.5px solid ${T.ac}`:`1.5px solid ${T.bd}`,background:filter===f.k?"#F0F9FF":"transparent",color:filter===f.k?T.ac:T.t2,fontFamily:"'DM Sans'"}}>{f.i} {f.l}</button>
               ))}
               <div style={{flex:1}}/>
-              <span style={{fontSize:10,color:T.t2,fontFamily:"'JetBrains Mono'"}}>Y/N/S · ←→ · D · ✏️ edit</span>
+              <span style={{fontSize:10,color:T.t2,fontFamily:"'JetBrains Mono'"}}>Y/N/S · ←→ · D </span>
             </div>
             {grouped.map(([gN,items])=>{const exp=expanded[gN]!==false;return<div key={gN} style={{marginBottom:12}}>
               <div onClick={()=>setExpanded(p=>({...p,[gN]:!exp}))} style={{display:"flex",alignItems:"center",gap:8,padding:"8px 12px",background:"#F8FAFC",borderRadius:8,cursor:"pointer",marginBottom:exp?8:0,border:`1px solid ${T.bd}`}}>
@@ -796,6 +984,10 @@ export default function App(){
               />))}
             </div>;})}
             {grouped.length===0&&<div style={{textAlign:"center",padding:40,color:T.t2,fontSize:14}}>No checks match filter.</div>}
+            <div style={{display:"flex",justifyContent:"center",gap:12,padding:"20px 0 40px",borderTop:`1px solid ${T.bd}`,marginTop:16}}>
+              <button onClick={goP} disabled={curIdx===0} style={{background:"#F1F5F9",border:"none",borderRadius:8,padding:"10px 20px",cursor:curIdx===0?"not-allowed":"pointer",fontSize:14,fontWeight:600,color:T.t1}}>← Prev</button>
+              <button onClick={saveAndNext} disabled={curIdx>=filtered.length-1} style={{background:"linear-gradient(135deg,#0F766E,#D97706)",border:"none",borderRadius:8,padding:"10px 28px",cursor:curIdx>=filtered.length-1?"not-allowed":"pointer",fontSize:14,fontWeight:700,color:"#FFF",opacity:curIdx>=filtered.length-1?0.5:1}}>Save &amp; Next →</button>
+            </div>
           </>)}
         </main>
       </div>

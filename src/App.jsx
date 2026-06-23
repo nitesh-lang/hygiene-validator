@@ -66,12 +66,33 @@ function toMM(val,unit){if(/\bcm\b|centimet/.test(unit))return val*10;if(/\bm\b|
 function dimsEq(a,b){
   const na=numSeq(a),nb=numSeq(b);if(!na.length||!nb.length||na.length!==nb.length)return false;
   const ua=ss(a).toLowerCase(),ub=ss(b).toLowerCase();
-  const ma=na.map(n=>toMM(n,ua)),mb=nb.map(n=>toMM(n,ub));
+  // Convert to mm then compare as a SORTED set — Amazon lists dimensions as
+  // D x W x H while the input sheet often uses W x D x H (or L x W x H), so the
+  // SAME box fails a position-by-position compare. Sorting makes order irrelevant.
+  const ma=na.map(n=>toMM(n,ua)).sort((x,y)=>x-y),mb=nb.map(n=>toMM(n,ub)).sort((x,y)=>x-y);
   if(ma.every((n,i)=>Math.abs(n-mb[i])<1))return true;
-  // also accept raw-number match (same unit on both sides)
-  return na.every((n,i)=>Math.abs(n-nb[i])<0.01);}
+  // also accept raw-number match (same unit on both sides), order-independent
+  const ra=[...na].sort((x,y)=>x-y),rb=[...nb].sort((x,y)=>x-y);
+  return ra.every((n,i)=>Math.abs(n-rb[i])<0.01);}
 function isY(v){const n=nm(v);return["y","yes","correct","updated","true"].includes(n);}
 function isN(v){const n=nm(v);return["n","no","n0","incorrect","false","0"].includes(n);}
+// Contact/address match: addresses are formatted differently on the PDP vs the
+// input sheet, so whole-string similarity is unreliable. Instead match on stable
+// ANCHORS — 6-digit pincode, email, and the last 6 digits of any phone number.
+// If the crawl value carries at least one of the input's anchors, it's the same
+// entity (PASS). If crawl has content but none of the anchors, it's a possible
+// mismatch (REVIEW, not a hard FAIL — a human confirms).
+function contactAnchors(s){const t=ss(s).toLowerCase();const out=new Set();
+  (t.match(/\b\d{6}\b/g)||[]).forEach(x=>out.add(x));
+  (t.match(/[\w.+-]+@[\w.-]+/g)||[]).forEach(x=>out.add(x));
+  (t.match(/\d{5}/g)||[]).forEach(x=>out.add(x)); // 5-digit phone tail
+  return out;}
+function contactEq(crawl,input){const c=ss(crawl),i=ss(input);
+  if(!c&&!i)return"REVIEW";if(c&&!i)return"PASS";if(!c&&i)return"FAIL";
+  const ca=contactAnchors(c),ia=contactAnchors(i);
+  if(ia.size===0)return simRatio(nm(c),nm(i))>=0.5?"PASS":"REVIEW";
+  for(const a of ia){if(ca.has(a))return"PASS";}
+  return"REVIEW";}
 function pipeC(s){const v=ss(s);return v?v.split("|").filter(x=>x.trim()).length:0;}
 function cleanB(b){return ss(b).replace(/^Visit the\s+/i,"").replace(/\s+Store$/i,"").replace(/^Brand:\s*/i,"").trim();}
 const EXCL=new Set(["tonor","coleshome","n"]);
@@ -214,6 +235,7 @@ function reDecide(id, crawlVal, inputVal, mode){
   // Title format & 3P-active: input-driven Y/N where applicable.
   if(mode==="titlefmt"){if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return c?"PASS":"REVIEW";}
   if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
+  if(mode==="contact")return contactEq(c,inp);
   if(!c&&!inp)return"REVIEW";
   // Crawl has a value but reference is blank: for descriptive attributes there's nothing to contradict, so PASS (not a forced human decision).
   const CRAWL_ONLY_PASS=new Set(["yn","text","weight","dims","num","img5"]);
@@ -242,7 +264,7 @@ function reDecide(id, crawlVal, inputVal, mode){
 }
 
 // Check mode lookup
-const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"yn",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
+const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"contact",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
 
 // ═══ VALIDATION ═══
 function validate(cr,ir){
@@ -262,6 +284,7 @@ function validate(cr,ir){
     if(mode==="titlefmt"){if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return c?"PASS":"REVIEW";}
     // 3P ASIN active: crawled live PDP confirms active; reconcile with input Y/N.
     if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
+    if(mode==="contact")return contactEq(c,inp);
     if(!c&&!inp)return"REVIEW";
     const CRAWL_ONLY_PASS2=new Set(["yn","text","weight","dims","num","img5"]);
     if(c&&!inp)return CRAWL_ONLY_PASS2.has(mode)?"PASS":"REVIEW";
@@ -290,7 +313,20 @@ function validate(cr,ir){
   function add(id,c,inp,mode="yn"){const a=ss(c),b=ss(inp);R.push({id,crawlVal:a,inputVal:b,origInputVal:b,status:decide(id,a,b,mode)});}
 
   add("asin_active_1p","",iv("1 p asin active","1p asin active"),"yn");
-  add("asin_active",cv("Title")||cv("Sold By")?"Live":"",iv("asin active(yes","asin active"),"active");
+  // 3P active now uses the crawler's real Stock Status / Listing Status columns
+  // (falls back to Title/Sold-By presence for older crawl files). A redirect to
+  // a different variation ASIN is surfaced so the row isn't silently trusted.
+  const stockStatus=cv("Stock Status"), listingStatus=cv("Listing Status");
+  const redirectFlag=ss(cv("ASIN Redirect")).toUpperCase()==="YES";
+  const crawledAsin=cv("Crawled ASIN");
+  let activeVal="";
+  if(listingStatus) activeVal=listingStatus;
+  else if(stockStatus) activeVal=stockStatus;
+  else if(cv("Title")||cv("Sold By")) activeVal="Live";
+  if(redirectFlag&&crawledAsin) activeVal=`⚠ REDIRECTED to ${crawledAsin} — ${activeVal||"data unreliable"}`;
+  // Out-of-stock or dead listings should not silently PASS as active.
+  const activeForDecide=(/out of stock|dead|suppressed|unavailable/i.test(activeVal))?"":activeVal;
+  add("asin_active",redirectFlag?"":activeForDecide,iv("asin active(yes","asin active"),"active");
   add("nodding",cv("Category Tree"),iv("correct nodding","nodding on pdp"),"nodding");
   add("title",cv("Title"),iv("title name"),"title");
   const bul=cv("Bullets");
@@ -309,7 +345,7 @@ function validate(cr,ir){
   add("dimensions",cv("Dimensions"),iv("dimensions"),"dims");
   add("material",cv("Material"),iv("material"),"yn");
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
-  add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"yn");
+  add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"contact");
   add("packer",cv("Packer Contact Information"),iv("packer detail","packer"),"yn");
   add("importer",cv("Importer Contact Information"),iv("importer detail","importer"),"yn");
   add("backend_kw","",iv("backend search term","search terms (y"),"backend");

@@ -341,7 +341,7 @@ function validate(cr,ir){
   add("colour",cv("Colour"),iv("colour","color"),"yn");
   add("weight",cv("Weight"),iv("iteam weight","item weight"),"weight");
   add("dimensions",cv("Dimensions"),iv("dimensions"),"dims");
-  add("material",cv("Material"),iv("material"),"yn");
+  {const _mat=cv("Material");R.push({id:"material",crawlVal:_mat?_mat:"Not present",inputVal:ss(iv("material")),origInputVal:ss(iv("material")),status:_mat?decide("material",_mat,ss(iv("material")),"yn"):"FAIL"});}
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
   add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"contact");
   add("packer",cv("Packer Contact Information"),iv("packer detail","packer"),"yn");

@@ -219,7 +219,7 @@ const CK=[
 ];
 
 // Checks that are ALWAYS manual — they show as REVIEW for a human to decide, never auto-pass/fail.
-const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image","comp_remarks","comp_crosscheck","comp_policy"]);
+const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image","comp_remarks","comp_crosscheck","comp_policy","lifestyle_img"]);
 
 // ═══ RE-DECIDE STATUS for a single check ═══
 function reDecide(id, crawlVal, inputVal, mode){
@@ -355,7 +355,7 @@ function validate(cr,ir){
   const ic=pipeC(cv("Image URLs"))||parseInt(cv("Image Count"))||0;
   add("images_5",String(ic),iv("images - minimum"),"img5");
   add("feature_img",ic>0?`${ic} images on PDP`:"",iv("feature image"),"yn");
-  add("lifestyle_img",ic>=5?`${ic} images (likely incl. lifestyle)`:(ic>0?`${ic} images`:""),iv("lifestyle image"),"yn");
+  add("lifestyle_img",ic>0?`${ic} gallery images — confirm lifestyle manually`:"",iv("lifestyle image"),"yn");
   add("cs_image","",iv("customer support image","support qr image","warranty image"),"yn");
   add("box_image","",iv("what is in the box image","what's in the box image"),"yn");
   add("box_contents",cv("What is in the box?"),iv("what's in the box (box contents)","box contents","what's in the box"),"yn");

@@ -185,7 +185,6 @@ const CK=[
   {id:"warranty_desc",name:"Warranty Description",group:"P4 · Warranty Description",p:4},
   {id:"brand_story",name:"Brand Story (manual)",group:"P5 · Brand Story",p:5},
   {id:"brand_store",name:"Brand Store",group:"P5 · Brand Story",p:5},
-  {id:"mail_qr",name:"Mail + Support QR Images (manual)",group:"P5 · Brand Story",p:5},
   {id:"cs_wa_qr_story",name:"CS WA QR Code in Brand Story (manual)",group:"P5 · Brand Story",p:5},
   {id:"colour",name:"Colour",group:"P6 · Color",p:6},
   {id:"weight",name:"Weight",group:"P7 · Product Weight",p:7},
@@ -220,7 +219,7 @@ const CK=[
 ];
 
 // Checks that are ALWAYS manual — they show as REVIEW for a human to decide, never auto-pass/fail.
-const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","mail_qr","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image","comp_remarks","comp_crosscheck","comp_policy"]);
+const MANUAL_CHECKS=new Set(["bullets_box","warranty_bullet","brand_story","packer","importer","cs_image","ours_vs_their","listing_video","aplus","description","variation","asin_active_1p","cs_wa_qr_story","variation_theme","box_image","comp_remarks","comp_crosscheck","comp_policy"]);
 
 // ═══ RE-DECIDE STATUS for a single check ═══
 function reDecide(id, crawlVal, inputVal, mode){
@@ -264,7 +263,7 @@ function reDecide(id, crawlVal, inputVal, mode){
 }
 
 // Check mode lookup
-const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",mail_qr:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"contact",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
+const CHECK_MODES={asin_active_1p:"yn",asin_active:"active",nodding:"nodding",title:"title",title_format:"titlefmt",bullets_avail:"yn",bullets_kw:"yn",bullets_box:"yn",warranty:"warranty",warranty_bullet:"yn",warranty_desc:"text",brand_story:"yn",brand_store:"yn",cs_wa_qr_story:"yn",colour:"yn",weight:"weight",dimensions:"dims",material:"yn",addl_features:"yn",manufacturer:"contact",packer:"yn",importer:"yn",backend_kw:"backend",return_policy:"return",fee_category:"backend",ref_fees:"backend",variation:"yn",variation_theme:"yn",images_5:"img5",feature_img:"yn",lifestyle_img:"yn",cs_image:"yn",box_image:"yn",box_contents:"yn",ours_vs_their:"yn",listing_video:"yn",nce:"nce",ratings_reviews:"rating",reviews:"reviews",aplus:"yn",description:"yn",comp_remarks:"yn",comp_crosscheck:"yn",comp_policy:"yn"};
 
 // ═══ VALIDATION ═══
 function validate(cr,ir){
@@ -338,7 +337,6 @@ function validate(cr,ir){
   add("warranty_desc",cv("Warranty Description")||cv("Warranty Policy"),iv("warranty  on panel","warranty on panel","warranty description"),"text");
   add("brand_story",cv("Brand Story"),iv("product added in brand story","brand story"),"yn");
   add("brand_store",cv("Brand Store")||(cv("Brand Story")?"Present (story only)":""),iv("product added in brand store","brand store","from the brand section"),"yn");
-  add("mail_qr","",iv("mail id","mail qr","support qr image"),"yn");
   add("cs_wa_qr_story","",iv("cs wa qr code in brand story","cs wa qr"),"yn");
   add("colour",cv("Colour"),iv("colour","color"),"yn");
   add("weight",cv("Weight"),iv("iteam weight","item weight"),"weight");

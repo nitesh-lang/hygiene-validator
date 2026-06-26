@@ -607,7 +607,26 @@ export default function App(){
       reader.onload=ev=>{const rows=parseCrawl(ev.target.result);setCrawlData(rows);addLog(`✅ Crawl: ${rows.length} ASINs from ${file.name}`);};
       reader.readAsText(file);
     }else{
-      reader.onload=ev=>{const wb=XLSX.read(ev.target.result,{type:"array"});const csv=XLSX.utils.sheet_to_csv(wb.Sheets[wb.SheetNames[0]]);const rows=parseCrawl(csv);setCrawlData(rows);addLog(`✅ Crawl: ${rows.length} ASINs from ${file.name}`);};
+      reader.onload=ev=>{
+        const wb=XLSX.read(ev.target.result,{type:"array"});
+        // Read every sheet in the workbook — previously only SheetNames[0] was read, silently dropping
+        // all other sheets (common in brand/category-partitioned crawl exports).
+        const perSheet=[];
+        const all=[];
+        wb.SheetNames.forEach(name=>{
+          const csv=XLSX.utils.sheet_to_csv(wb.Sheets[name]);
+          const rows=parseCrawl(csv);
+          perSheet.push(`${name}:${rows.length}`);
+          all.push(...rows);
+        });
+        const seen=new Set();
+        const rows=all.filter(r=>{const a=ss(r.ASIN).toUpperCase();if(!a||seen.has(a))return false;seen.add(a);return true;});
+        const dropped=all.length-rows.length;
+        setCrawlData(rows);
+        const sheetTag=wb.SheetNames.length>1?` [${perSheet.join(", ")}]`:"";
+        const dupTag=dropped>0?` · ${dropped} duplicate ASIN${dropped>1?"s":""} skipped`:"";
+        addLog(`✅ Crawl: ${rows.length} ASINs from ${file.name}${sheetTag}${dupTag}`);
+      };
       reader.readAsArrayBuffer(file);
     }
   },[]);
@@ -627,7 +646,17 @@ export default function App(){
           const sample=rows[0];
           const dataKeys=Object.keys(sample).filter(k=>!k.startsWith("_")&&sample[k]);
           addLog(`✅ ${file.name}: ${rows.length} ASINs, sheet="${sample._sheet}", ${dataKeys.length} cols`);
-          setInputData(prev=>{const ex=new Set(prev.map(r=>r._asin));return[...prev,...rows.filter(r=>!ex.has(r._asin))];});
+          // Newer wins: when an upload contains an ASIN already loaded, replace the existing row instead
+          // of silently dropping the new one. Re-uploading a corrected sheet previously had no effect.
+          let logged=false;
+          setInputData(prev=>{
+            const map=new Map();
+            prev.forEach(r=>{if(r._asin)map.set(r._asin,r);});
+            let added=0,updated=0;
+            rows.forEach(r=>{if(!r._asin)return;if(map.has(r._asin))updated++;else added++;map.set(r._asin,r);});
+            if(!logged){logged=true;Promise.resolve().then(()=>{if(added||updated)addLog(`   ↻ ${added} added · ${updated} updated (newer wins)`);});}
+            return Array.from(map.values());
+          });
         }else{
           addLog(`❌ ${file.name}: 0 rows! Sheets: ${wb.SheetNames.join(", ")}`);
         }
@@ -731,7 +760,39 @@ export default function App(){
     window.location.href=`mailto:?subject=${encodeURIComponent(subject)}&body=${encodeURIComponent(body)}`;
   };
 
-  useEffect(()=>{if(screen!=="validate"||!cur)return;const h=e=>{if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;if(e.key==="ArrowRight"){goN();e.preventDefault();}else if(e.key==="ArrowLeft"){goP();e.preventDefault();}else if(["y","n","s"].includes(e.key.toLowerCase())){const val=e.key.toLowerCase()==="y"?"Yes":e.key.toLowerCase()==="n"?"No":"Not Sure";const a=getA(cur.asin);const pend=cur.checks.find(c=>c.status==="REVIEW"&&(!a.decisions[c.id]||a.decisions[c.id]==="Not Sure"));if(pend)setA(cur.asin,s=>({...s,decisions:{...s.decisions,[pend.id]:val}}));}else if(e.key.toLowerCase()==="d")toggleDone();};window.addEventListener("keydown",h);return()=>window.removeEventListener("keydown",h);},[screen,cur,curIdx,filtered,asinSt]);
+  // Keydown listener reads live state from a ref so navigation+decision keystrokes always hit the current ASIN.
+  // (Previously the handler closed over cur/asinSt/filtered and relied on re-registering via deps, which both
+  //  thrashed the listener on every Y/N press and left a small race window after navigation where a quick
+  //  next keystroke could land on the previous ASIN.)
+  const kbRef=useRef({});
+  useEffect(()=>{kbRef.current={cur,filtered,asinSt,authUser};});
+  useEffect(()=>{
+    if(screen!=="validate")return;
+    const blank={decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
+    const h=e=>{
+      if(e.target.tagName==="INPUT"||e.target.tagName==="TEXTAREA")return;
+      const L=kbRef.current;if(!L||!L.cur)return;
+      const {cur,filtered,asinSt,authUser}=L;
+      if(e.key==="ArrowRight"){setCurIdx(i=>Math.min(i+1,filtered.length-1));e.preventDefault();return;}
+      if(e.key==="ArrowLeft"){setCurIdx(i=>Math.max(i-1,0));e.preventDefault();return;}
+      const k=e.key.toLowerCase();
+      if(k==="y"||k==="n"||k==="s"){
+        const val=k==="y"?"Yes":k==="n"?"No":"Not Sure";
+        const a=asinSt[cur.asin]||blank;
+        const pend=cur.checks.find(c=>c.status==="REVIEW"&&(!a.decisions[c.id]||a.decisions[c.id]==="Not Sure"));
+        if(pend)setAsinSt(p=>{const prev=p[cur.asin]||blank;return{...p,[cur.asin]:{...prev,decisions:{...prev.decisions,[pend.id]:val},by:authUser||prev.by||""}};});
+      }else if(k==="d"){
+        const a=asinSt[cur.asin]||blank;
+        if(!a.done){
+          const left=cur.checks.filter(ck=>{const d=a.decisions[ck.id];return !d||d==="Not Sure";}).length;
+          if(left>0&&!window.confirm(`${left} check${left>1?"s are":" is"} still "Not Sure". Mark this ASIN done anyway?`))return;
+        }
+        setAsinSt(p=>{const prev=p[cur.asin]||blank;return{...p,[cur.asin]:{...prev,done:!prev.done,by:authUser||prev.by||""}};});
+      }
+    };
+    window.addEventListener("keydown",h);
+    return()=>window.removeEventListener("keydown",h);
+  },[screen]);
 
   const dc=useMemo(()=>Object.values(asinSt).filter(s=>s.done).length,[asinSt]);
   const lb=useRef(0);

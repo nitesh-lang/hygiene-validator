@@ -8,7 +8,7 @@ if(!document.getElementById("hyg-fonts")){const l=document.createElement("link")
 
 const LS="hyg7";
 function ldLS(){try{const s=localStorage.getItem(LS);return s?JSON.parse(s):null;}catch{return null;}}
-function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));}catch{}}
+function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));return{ok:true};}catch(e){return{ok:false,err:(e&&e.name)||"Error"};}}
 
 function ss(v){if(v==null)return"";const s=String(v).trim();return["nan","none","nat","undefined","null","#n/a","n/a","#ref!","#value!"].includes(s.toLowerCase())?"":s;}
 function nm(s){return ss(s).toLowerCase().replace(/\s+/g," ").trim();}
@@ -571,7 +571,31 @@ export default function App(){
 
 
   useEffect(()=>{const d=ldLS();if(d){if(d.asinSt)setAsinSt(d.asinSt);if(d.validator)setValidator(d.validator);if(d.curBrand)setCurBrand(d.curBrand);if(d.corrections)setCorrections(d.corrections);}},[]);
-  useEffect(()=>{if(Object.keys(asinSt).length>0)svLS({asinSt,validator,curBrand,curIdx,corrections});},[asinSt,validator,curBrand,curIdx,corrections]);
+  // Debounced auto-save so typing isn't slowed by a full JSON.stringify + localStorage write on every keystroke,
+  // and so QuotaExceededError actually reaches the user instead of being swallowed (which would silently lose
+  // multi-day progress on refresh/close).
+  const saveErrRef=useRef(false);
+  useEffect(()=>{
+    if(Object.keys(asinSt).length===0)return;
+    const payload={asinSt,validator,curBrand,curIdx,corrections};
+    const t=setTimeout(()=>{
+      const res=svLS(payload);
+      if(!res.ok){
+        if(!saveErrRef.current){
+          saveErrRef.current=true;
+          addLog(`⚠️ Auto-save FAILED (${res.err}) — browser storage is full. EXPORT YOUR WORK NOW or it will be lost on refresh/close.`);
+          try{window.alert("Auto-save failed — browser storage is full.\n\nYour work is still in this tab, but it will be LOST if you close or refresh the browser.\n\nClick Export now to save your progress to a file.");}catch{}
+        }
+      }else if(saveErrRef.current){
+        saveErrRef.current=false;
+        addLog("✅ Auto-save recovered.");
+      }
+    },500);
+    // Last-chance flush on tab close / refresh so debounce-in-flight changes aren't lost.
+    const flush=()=>{svLS(payload);};
+    window.addEventListener("beforeunload",flush);
+    return()=>{clearTimeout(t);window.removeEventListener("beforeunload",flush);};
+  },[asinSt,validator,curBrand,curIdx,corrections]);
 
   // Get corrected input value for a check
   const getCorrectedVal=(asin,checkId,origVal)=>{

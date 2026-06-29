@@ -531,6 +531,10 @@ function CheckRow({check,def,decision,comment,verified,onDecide,onComment,onVeri
 }
 
 // ═══ MAIN APP ═══
+async function apiFetchValidations(){
+  try{const r=await fetch(`${API}/validations`);if(!r.ok)return[];return await r.json();}catch{return[];}
+}
+
 export default function App(){
   const[screen,setScreen]=useState("upload");
   const[crawlData,setCrawlData]=useState([]);
@@ -614,6 +618,37 @@ export default function App(){
         done.forEach(asin=>{
           const ex=next[asin]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
           if(!ex.done)next[asin]={...ex,done:true};
+        });
+        return next;
+      });
+    });
+    return()=>{cancelled=true;};
+  },[]);
+
+  // Pull EVERYONE's full validation records from the backend and merge them in,
+  // so any user's export includes the whole team's work (who validated + their
+  // Yes/No decisions), not just this browser's local validations.
+  useEffect(()=>{
+    let cancelled=false;
+    apiFetchValidations().then(recs=>{
+      if(cancelled||!Array.isArray(recs)||recs.length===0)return;
+      setAsinSt(prev=>{
+        const next={...prev};
+        recs.forEach(rec=>{
+          const asin=String(rec.asin||"").trim();
+          if(!asin)return;
+          const ex=next[asin]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
+          const decisions={...ex.decisions};
+          const cr=rec.check_results||{};
+          // Only fill decisions we don't already have locally (local edits win).
+          Object.keys(cr).forEach(k=>{ if(decisions[k]===undefined) decisions[k]=cr[k]; });
+          next[asin]={
+            ...ex,
+            done:true,
+            decisions,
+            notes: ex.notes || rec.notes || "",
+            by: ex.by || rec.validated_by || "",
+          };
         });
         return next;
       });

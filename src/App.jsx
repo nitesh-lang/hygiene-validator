@@ -10,6 +10,37 @@ const LS="hyg7";
 function ldLS(){try{const s=localStorage.getItem(LS);return s?JSON.parse(s):null;}catch{return null;}}
 function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));}catch{}}
 
+/* ─────────────────────────────────────────────────────────────────────────
+   SHARED BACKEND (Render API + Postgres)
+   The validator still keeps its own localStorage copy of everything (offline
+   safety), but "Mark Done" now ALSO writes to the shared database so the whole
+   team sees the same done-list and nobody re-validates the same ASIN.
+   ───────────────────────────────────────────────────────────────────────── */
+const API="https://hygiene-api.onrender.com";
+
+// POST a completed validation to the shared DB. Fire-and-forget: never blocks
+// the UI, and a network failure leaves the local copy intact.
+async function apiMarkDone({asin,validated_by,check_results,notes,brand}){
+  try{
+    const r=await fetch(`${API}/validate`,{
+      method:"POST",
+      headers:{"Content-Type":"application/json"},
+      body:JSON.stringify({asin,validated_by:validated_by||"",check_results:check_results||{},notes:notes||"",brand:brand||""}),
+    });
+    return r.ok;
+  }catch(e){return false;}
+}
+
+// GET the set of ASINs already validated by anyone, so we can show them as done.
+async function apiFetchDone(){
+  try{
+    const r=await fetch(`${API}/done`);
+    if(!r.ok)return null;
+    return await r.json(); // array of asins
+  }catch(e){return null;}
+}
+
+
 function ss(v){if(v==null)return"";const s=String(v).trim();return["nan","none","nat","undefined","null","#n/a","n/a","#ref!","#value!"].includes(s.toLowerCase())?"":s;}
 function nm(s){return ss(s).toLowerCase().replace(/\s+/g," ").trim();}
 function strip(s){return ss(s).replace(/[^a-zA-Z0-9]/g,"").toLowerCase();}
@@ -571,6 +602,25 @@ export default function App(){
 
 
   useEffect(()=>{const d=ldLS();if(d){if(d.asinSt)setAsinSt(d.asinSt);if(d.validator)setValidator(d.validator);if(d.curBrand)setCurBrand(d.curBrand);if(d.corrections)setCorrections(d.corrections);}},[]);
+
+  // Pull the shared done-list from the backend and mark those ASINs done locally
+  // too, so a product validated by ANY teammate shows as done for everyone.
+  useEffect(()=>{
+    let cancelled=false;
+    apiFetchDone().then(done=>{
+      if(cancelled||!Array.isArray(done)||done.length===0)return;
+      setAsinSt(prev=>{
+        const next={...prev};
+        done.forEach(asin=>{
+          const ex=next[asin]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
+          if(!ex.done)next[asin]={...ex,done:true};
+        });
+        return next;
+      });
+    });
+    return()=>{cancelled=true;};
+  },[]);
+
   useEffect(()=>{if(Object.keys(asinSt).length>0)svLS({asinSt,validator,curBrand,curIdx,corrections});},[asinSt,validator,curBrand,curIdx,corrections]);
 
   // Get corrected input value for a check
@@ -683,10 +733,30 @@ export default function App(){
   const setA=(a,fn)=>setAsinSt(p=>{const prev=p[a]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};const upd=fn(prev);return{...p,[a]:{...upd,by:authUser||upd.by||""}};});
   const goN=()=>setCurIdx(i=>Math.min(i+1,filtered.length-1));
   const goP=()=>setCurIdx(i=>Math.max(i-1,0));
+  // Build the full check-results record for an ASIN and push it to the shared
+  // DB. Called whenever an ASIN is marked done. Uses the logged-in user's name.
+  const pushDone=(p)=>{
+    if(!p)return;
+    const a=getA(p.asin);
+    const check_results={};
+    (p.checks||[]).forEach(ck=>{
+      const d=a.decisions[ck.id];
+      check_results[ck.id]=(d&&d!=="Not Sure")?d:ck.status;
+    });
+    apiMarkDone({
+      asin:p.asin,
+      validated_by:authUser||validator||a.by||"",
+      check_results,
+      notes:a.notes||"",
+      brand:p.brand||"",
+    });
+  };
+
   // Save & Next: mark current ASIN done (progress auto-saves already) then jump to next.
   const saveAndNext=()=>{
     if(!cur)return;
     setA(cur.asin,s=>({...s,done:true}));
+    pushDone(cur);
     setCurIdx(i=>Math.min(i+1,filtered.length-1));
     window.scrollTo({top:0,behavior:"smooth"});
   };
@@ -706,6 +776,7 @@ export default function App(){
     if(!a.done){
       const left=cur.checks.filter(ck=>{const d=a.decisions[ck.id];return !d||d==="Not Sure";}).length;
       if(left>0&&!window.confirm(`${left} check${left>1?"s are":" is"} still "Not Sure". Mark this ASIN done anyway?`))return;
+      pushDone(cur); // marking done → save to shared DB for the whole team
     }
     setA(cur.asin,s=>({...s,done:!s.done}));
   };

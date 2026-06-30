@@ -531,8 +531,23 @@ function CheckRow({check,def,decision,comment,verified,onDecide,onComment,onVeri
 }
 
 // ═══ MAIN APP ═══
-async function apiFetchValidations(){
-  try{const r=await fetch(`${API}/validations`);if(!r.ok)return[];return await r.json();}catch{return[];}
+async function apiFetchProducts(){
+  try{const r=await fetch(`${API}/products`);if(!r.ok)return null;return await r.json();}catch{return null;}
+}
+async function apiFetchInput(){
+  try{const r=await fetch(`${API}/input`);if(!r.ok)return null;return await r.json();}catch{return null;}
+}
+// Rebuild a SheetJS workbook from the backend /input payload so we can reuse the
+// EXACT same parseInput() pipeline a manual upload uses (identical _asin keys,
+// nm() column normalization, sheet picking). This guarantees checks compute the
+// same whether data came from upload or backend.
+function inputPayloadToWorkbook(payload){
+  if(!payload||!Array.isArray(payload.columns)||!Array.isArray(payload.rows))return null;
+  const cols=payload.columns;
+  const aoa=[cols, ...payload.rows.map(row=>cols.map(c=>row[c]!==undefined&&row[c]!==null?row[c]:""))];
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  const sheetName=payload.sheet_name||"Format";
+  return {SheetNames:[sheetName], Sheets:{[sheetName]:ws}};
 }
 
 export default function App(){
@@ -540,6 +555,8 @@ export default function App(){
   const[crawlData,setCrawlData]=useState([]);
   const[inputData,setInputData]=useState([]);
   const[products,setProducts]=useState([]);
+  const[autoLoading,setAutoLoading]=useState(true);
+  const[autoLoadErr,setAutoLoadErr]=useState("");
   const[curBrand,setCurBrand]=useState("ALL");
   const[curIdx,setCurIdx]=useState(0);
   const[filter,setFilter]=useState("all");
@@ -625,37 +642,6 @@ export default function App(){
     return()=>{cancelled=true;};
   },[]);
 
-  // Pull EVERYONE's full validation records from the backend and merge them in,
-  // so any user's export includes the whole team's work (who validated + their
-  // Yes/No decisions), not just this browser's local validations.
-  useEffect(()=>{
-    let cancelled=false;
-    apiFetchValidations().then(recs=>{
-      if(cancelled||!Array.isArray(recs)||recs.length===0)return;
-      setAsinSt(prev=>{
-        const next={...prev};
-        recs.forEach(rec=>{
-          const asin=String(rec.asin||"").trim();
-          if(!asin)return;
-          const ex=next[asin]||{decisions:{},comments:{},verified:{},done:false,notes:"",by:""};
-          const decisions={...ex.decisions};
-          const cr=rec.check_results||{};
-          // Only fill decisions we don't already have locally (local edits win).
-          Object.keys(cr).forEach(k=>{ if(decisions[k]===undefined) decisions[k]=cr[k]; });
-          next[asin]={
-            ...ex,
-            done:true,
-            decisions,
-            notes: ex.notes || rec.notes || "",
-            by: ex.by || rec.validated_by || "",
-          };
-        });
-        return next;
-      });
-    });
-    return()=>{cancelled=true;};
-  },[]);
-
   // Debounced auto-save so typing isn't slowed by a full JSON.stringify + localStorage write on every keystroke,
   // and so QuotaExceededError actually reaches the user instead of being swallowed (which would silently lose
   // multi-day progress on refresh/close).
@@ -706,6 +692,41 @@ export default function App(){
     });
     setCorrModal(null);
   };
+
+  // PHASE 2: auto-load crawl + input from the backend on startup so no user has
+  // to upload files. Falls back to the manual upload screen if the backend has
+  // no data or is unreachable.
+  useEffect(()=>{
+    let cancelled=false;
+    (async()=>{
+      setAutoLoading(true);setAutoLoadErr("");
+      const [prodRows,inputPayload]=await Promise.all([apiFetchProducts(),apiFetchInput()]);
+      if(cancelled)return;
+      if(!Array.isArray(prodRows)||prodRows.length===0){
+        // No backend products -> show manual upload screen.
+        setAutoLoadErr("no-backend-products");
+        setAutoLoading(false);
+        return;
+      }
+      // Crawl rows from /products already match parseCrawl() output shape (CSV row
+      // objects keyed by original headers like ASIN, Brand, Title...). Keep only
+      // rows with a usable ASIN, same as parseCrawl's filter.
+      const crawl=prodRows.filter(r=>ss(r.ASIN).length>=5);
+      setCrawlData(crawl);
+      setCrawlName("backend: /products");
+      // Input: rebuild a workbook and run the SAME parseInput() pipeline.
+      let inp=[];
+      if(inputPayload&&Array.isArray(inputPayload.rows)&&inputPayload.rows.length){
+        const wb=inputPayloadToWorkbook(inputPayload);
+        if(wb){try{inp=parseInput(wb);}catch{inp=[];}}
+      }
+      setInputData(inp);
+      setInputNames(inputPayload&&inputPayload.sheet_name?[`backend: ${inputPayload.sheet_name}`]:[]);
+      addLog(`✅ Loaded from backend — crawl: ${crawl.length} ASINs, input: ${inp.length} rows`);
+      setAutoLoading(false);
+    })();
+    return()=>{cancelled=true;};
+  },[]);
 
   const onCrawl=useCallback((e)=>{
     const file=e.target.files[0];if(!file)return;
@@ -813,6 +834,19 @@ export default function App(){
     });
     setProducts(prods);setCurIdx(0);setScreen("validate");
   },[crawlData,inputData,corrections]);
+
+  // PHASE 2: once backend data has loaded into crawlData, automatically build the
+  // validation list and jump to the validate screen — no manual button click.
+  const autoRanRef=useRef(false);
+  useEffect(()=>{
+    if(autoRanRef.current)return;
+    if(autoLoading)return;
+    if(autoLoadErr)return;            // backend had no data -> stay on upload screen
+    if(!crawlData.length)return;      // nothing to validate
+    autoRanRef.current=true;
+    onValidate();
+  },[autoLoading,autoLoadErr,crawlData,onValidate]);
+
 
   const brands=useMemo(()=>{const m={};products.forEach(p=>{if(!m[p.brand])m[p.brand]={total:0,done:0,withInput:0,pass:0,fail:0,rev:0};m[p.brand].total++;if(p.hasInput)m[p.brand].withInput++;m[p.brand].pass+=p.pass;m[p.brand].fail+=p.fail;m[p.brand].rev+=p.review;if(asinSt[p.asin]?.done)m[p.brand].done++;});return m;},[products,asinSt]);
   const filtered=useMemo(()=>{let l=curBrand==="ALL"?products:products.filter(p=>p.brand===curBrand);if(hideDone)l=l.filter(p=>!asinSt[p.asin]?.done);return l;},[products,curBrand,hideDone,asinSt]);
@@ -1057,6 +1091,15 @@ export default function App(){
     </div>
   );
 
+  if(screen==="upload"&&autoLoading)return(
+    <div style={{minHeight:"100vh",display:"flex",alignItems:"center",justifyContent:"center",background:"#0B1220",color:"#E2E8F0",fontFamily:"'Outfit',system-ui,sans-serif"}}>
+      <div style={{textAlign:"center"}}>
+        <div style={{fontSize:28,marginBottom:12}}>⏳</div>
+        <div style={{fontSize:16,fontWeight:600}}>Loading products from server…</div>
+        <div style={{fontSize:12,color:"#8CA6A0",marginTop:6}}>First load can take ~30s while the server wakes up</div>
+      </div>
+    </div>
+  );
   if(screen==="upload")return(
     <div style={{minHeight:"100vh",background:"linear-gradient(135deg,#071A18 0%,#0B2F2A 48%,#172033 100%)",display:"flex",alignItems:"center",justifyContent:"center",fontFamily:"'DM Sans',sans-serif",padding:20}}>
       <div style={{maxWidth:640,width:"100%"}}>

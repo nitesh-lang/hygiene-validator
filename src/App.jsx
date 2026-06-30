@@ -16,7 +16,16 @@ function svLS(d){try{localStorage.setItem(LS,JSON.stringify(d));return{ok:true};
    safety), but "Mark Done" now ALSO writes to the shared database so the whole
    team sees the same done-list and nobody re-validates the same ASIN.
    ───────────────────────────────────────────────────────────────────────── */
-const API="https://hygiene-api.onrender.com";
+// API base + key come from env (.env locally, Render env vars in prod). Falls
+// back to the hosted URL so an un-configured dev build still loads read data.
+const API=import.meta.env.VITE_API_URL||"https://hygiene-api.onrender.com";
+const API_KEY=import.meta.env.VITE_API_KEY||"";
+
+// Every request carries the key in the x-api-key header. NOTE: a VITE_ var is
+// baked into the browser bundle, so this key is visible to anyone who reads the
+// site's JS — it stops anonymous scrapers/other origins (with a backend CORS
+// allow-list) but is NOT real auth. Server-side login is still the proper fix.
+function apiHeaders(extra){return {...(API_KEY?{"x-api-key":API_KEY}:{}),...(extra||{})};}
 
 // POST a completed validation to the shared DB. Fire-and-forget: never blocks
 // the UI, and a network failure leaves the local copy intact.
@@ -24,7 +33,7 @@ async function apiMarkDone({asin,validated_by,check_results,notes,brand}){
   try{
     const r=await fetch(`${API}/validate`,{
       method:"POST",
-      headers:{"Content-Type":"application/json"},
+      headers:apiHeaders({"Content-Type":"application/json"}),
       body:JSON.stringify({asin,validated_by:validated_by||"",check_results:check_results||{},notes:notes||"",brand:brand||""}),
     });
     return r.ok;
@@ -34,7 +43,7 @@ async function apiMarkDone({asin,validated_by,check_results,notes,brand}){
 // GET the set of ASINs already validated by anyone, so we can show them as done.
 async function apiFetchDone(){
   try{
-    const r=await fetch(`${API}/done`);
+    const r=await fetch(`${API}/done`,{headers:apiHeaders()});
     if(!r.ok)return null;
     return await r.json(); // array of asins
   }catch(e){return null;}
@@ -532,10 +541,10 @@ function CheckRow({check,def,decision,comment,verified,onDecide,onComment,onVeri
 
 // ═══ MAIN APP ═══
 async function apiFetchProducts(){
-  try{const r=await fetch(`${API}/products`);if(!r.ok)return null;return await r.json();}catch{return null;}
+  try{const r=await fetch(`${API}/products`,{headers:apiHeaders()});if(!r.ok)return null;return await r.json();}catch{return null;}
 }
 async function apiFetchInput(){
-  try{const r=await fetch(`${API}/input`);if(!r.ok)return null;return await r.json();}catch{return null;}
+  try{const r=await fetch(`${API}/input`,{headers:apiHeaders()});if(!r.ok)return null;return await r.json();}catch{return null;}
 }
 // Rebuild a SheetJS workbook from the backend /input payload so we can reuse the
 // EXACT same parseInput() pipeline a manual upload uses (identical _asin keys,

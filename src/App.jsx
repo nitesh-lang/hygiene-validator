@@ -297,7 +297,9 @@ function reDecide(id, crawlVal, inputVal, mode){
       case"weight":return weightEq(c,inp)?"PASS":"FAIL";
       case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
     case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
-    case"nce":return"REVIEW";
+    // NCE: the crawl value IS the selling price (see validate's add("nce",...)),
+    // so decide directly off `c` — no closure over the crawl row needed.
+    case"nce":{const sp=sn(c);if(isY(inp))return(sp&&sp>1500)?"PASS":"FAIL";if(isN(inp))return(sp&&sp<=1500)?"PASS":"FAIL";return"REVIEW";}
     default:return nm(c)===nm(inp)?"PASS":"FAIL";
   }
 }
@@ -311,45 +313,11 @@ function validate(cr,ir){
   const cv=k=>ss(cr[k]||"");
   const iv=(...p)=>gv(ir,...p);
 
-  function decide(id,c,inp,mode){
-    if(MANUAL_CHECKS.has(id))return"REVIEW";
-    // Backend-only fields: status from input sheet alone (Y/Correct = PASS, N/Incorrect = FAIL).
-    if(mode==="backend"){if(!inp)return"REVIEW";if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return"REVIEW";}
-    // Ratings with blank input: <4.0 = FAIL (push reviews), ≥4.0 = PASS.
-    if(mode==="rating"&&c&&!inp){const m=c.match(/(\d+(?:\.\d+)?)/);const v=m?parseFloat(m[1]):NaN;return isNaN(v)?"REVIEW":(v>=4?"PASS":"FAIL");}
-    // Reviews: pass when crawled review count > 0.
-    if(mode==="reviews"){const n=parseInt(ss(c).replace(/[^0-9]/g,""))||0;return n>0?"PASS":"FAIL";}
-    // Title format: input Y/N if provided, else PASS when a crawled title exists.
-    if(mode==="titlefmt"){if(isY(inp))return"PASS";if(isN(inp))return"FAIL";return c?"PASS":"REVIEW";}
-    // 3P ASIN active: crawled live PDP confirms active; reconcile with input Y/N.
-    if(mode==="active"){if(isY(inp))return c?"PASS":"FAIL";if(isN(inp))return c?"REVIEW":"PASS";return c?"PASS":"REVIEW";}
-    if(mode==="contact")return contactEq(c,inp);
-    if(!c&&!inp)return"REVIEW";
-    const CRAWL_ONLY_PASS2=new Set(["yn","text","weight","dims","num","img5"]);
-    if(c&&!inp)return CRAWL_ONLY_PASS2.has(mode)?"PASS":"REVIEW";
-    if(!c||!inp)return"REVIEW";
-    switch(mode){
-      case"nodding":return normNod(c)===normNod(inp)?"PASS":"FAIL";
-      case"title":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";return simRatio(cn,hn)>=0.85?"PASS":"FAIL";}
-      case"warranty":{const cy=warrantyYears(c),hy=warrantyYears(inp);if(cy!==null&&hy!==null)return cy===hy?"PASS":"FAIL";const cn=nm(c),hn=nm(inp);return(cn===hn||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";}
-      case"return":{const a=returnKind(c),b=returnKind(inp);if(a.repl!==b.repl||a.ret!==b.ret)return"FAIL";if(a.days&&b.days&&a.days!==b.days)return"FAIL";return"PASS";}
-      case"rating":{const rv=parseFloat((ss(c).match(/(\d+(?:\.\d+)?)/)||[])[1]);if(!isNaN(rv)&&rv<4)return"FAIL";const cb=ratingToBand(c),hb=ratingToBand(inp);if(cb&&hb)return cb===hb?"PASS":"FAIL";return cb?"PASS":"REVIEW";}
-      case"yn":{
-        if(isY(inp))return c.length>0?"PASS":"FAIL";
-        if(isN(inp))return c.length===0?"PASS":"REVIEW";
-        const cn=nm(c),hn=nm(inp);
-        return(cn===hn||textEqLoose(c,inp)||simRatio(cn,hn)>=0.6)?"PASS":"FAIL";
-      }
-      case"text":{const cn=nm(c),hn=nm(inp);if(cn===hn)return"PASS";if(textEqLoose(c,inp))return"PASS";return simRatio(cn,hn)>=0.6?"PASS":"FAIL";}
-      case"num":return numSeqEq(c,inp)?"PASS":"FAIL";
-      case"weight":return weightEq(c,inp)?"PASS":"FAIL";
-      case"dims":return dimsEq(c,inp)?"PASS":"FAIL";
-      case"img5":return(parseInt(c)||0)>=5?"PASS":"FAIL";
-      case"nce":{const sp=sn(cv("Selling Price"));if(isY(inp))return(sp&&sp>1500)?"PASS":"FAIL";if(isN(inp))return(sp&&sp<=1500)?"PASS":"FAIL";return"REVIEW";}
-      default:return nm(c)===nm(inp)?"PASS":"FAIL";
-    }
-  }
-  function add(id,c,inp,mode="yn"){const a=ss(c),b=ss(inp);R.push({id,crawlVal:a,inputVal:b,origInputVal:b,status:decide(id,a,b,mode)});}
+  // Status is computed by the shared module-level reDecide() — the SAME engine the
+  // UI uses when a correction is applied — so initial and re-decided statuses can
+  // never drift. (Previously a near-identical inner decide() lived here and had
+  // already diverged on the NCE case.)
+  function add(id,c,inp,mode="yn"){const a=ss(c),b=ss(inp);R.push({id,crawlVal:a,inputVal:b,origInputVal:b,status:reDecide(id,a,b,mode)});}
 
   add("asin_active_1p","",iv("1 p asin active","1p asin active"),"yn");
   // 3P active now uses the crawler's real Stock Status / Listing Status columns
@@ -381,7 +349,7 @@ function validate(cr,ir){
   add("colour",cv("Colour"),iv("colour","color"),"yn");
   add("weight",cv("Weight"),iv("iteam weight","item weight"),"weight");
   add("dimensions",cv("Dimensions"),iv("dimensions"),"dims");
-  {const _mat=cv("Material");R.push({id:"material",crawlVal:_mat?_mat:"Not present",inputVal:ss(iv("material")),origInputVal:ss(iv("material")),status:_mat?decide("material",_mat,ss(iv("material")),"yn"):"FAIL"});}
+  {const _mat=cv("Material");R.push({id:"material",crawlVal:_mat?_mat:"Not present",inputVal:ss(iv("material")),origInputVal:ss(iv("material")),status:_mat?reDecide("material",_mat,ss(iv("material")),"yn"):"FAIL"});}
   add("addl_features",cv("Additional Features"),iv("additional feature"),"yn");
   add("manufacturer",cv("Manufacturer Contact Information"),iv("mfg detail","manufacturer"),"contact");
   add("packer",cv("Packer Contact Information"),iv("packer detail","packer"),"yn");
@@ -827,7 +795,7 @@ export default function App(){
         const fail=checks.filter(c=>c.status==="FAIL").length;
         const review=checks.filter(c=>c.status==="REVIEW").length;
         const score=(pass+fail)?Math.round(pass/(pass+fail)*100):0;
-        return{asin,brand,title:ss(cr.Title),price:ss(cr["Selling Price"]),mrp:ss(cr.MRP),rating:ss(cr.Rating),ratingCount:ss(cr["Rating Count"]),imgUrls:ss(cr["Image URLs"]),productUrl:ss(cr["Product URL"]),hasInput:!!ir,checks,pass,fail,review,score,imgCount:pipeC(ss(cr["Image URLs"]))};
+        return{asin,brand,sku:ss(cr.SKU),title:ss(cr.Title),price:ss(cr["Selling Price"]),mrp:ss(cr.MRP),rating:ss(cr.Rating),ratingCount:ss(cr["Rating Count"]),imgUrls:ss(cr["Image URLs"]),productUrl:ss(cr["Product URL"]),hasInput:!!ir,checks,pass,fail,review,score,imgCount:pipeC(ss(cr["Image URLs"]))};
       }).sort((a,b)=>a.score-b.score);
     setAsinSt(prev=>{
       const next={...prev};
@@ -1020,7 +988,7 @@ export default function App(){
   const doExportSheet=()=>{
     // [header, fn] using crawl values (source of truth from live PDP).
     const COLS=[
-      ["Brand",p=>p.brand],["SKU",p=>inputOf(p,"title")&&""||""],["ASIN",p=>p.asin],
+      ["Brand",p=>p.brand],["SKU",p=>p.sku],["ASIN",p=>p.asin],
       ["Model Name",p=>inputOf(p,"title_format")],
       ["Correct Nodding for reference",p=>crawlOf(p,"nodding")],
       ["Title Name",p=>crawlOf(p,"title")],
